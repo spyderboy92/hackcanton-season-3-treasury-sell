@@ -1,0 +1,9 @@
+module TreasuryRfq.Types where
+
+-- Buy vs Sell is data so one RFQ template covers both treasury sides.
+data Side = Buy | Sell
+  deriving (Eq, Show)
+
+-- Closed and Cancelled are distinct so dealers can learn the RFQ ended without learning the winning price.
+data RfqStatus = Open | Closed | Cancelled
+  deriving (Eq, Show)

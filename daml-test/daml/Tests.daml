@@ -1,0 +1,13 @@
+module Tests where
+
+import Daml.Script
+import TreasuryRfq.Types (Side(..), RfqStatus(..))
+
+-- Proves the test package can import contract types; privacy cases land in a later ticket.
+scaffoldImportsCompile : Script ()
+scaffoldImportsCompile = script do
+  treasury <- allocateParty "Treasury"
+  dealerA <- allocateParty "DealerA"
+  assertMsg "side tags exist" (Buy /= Sell)
+  assertMsg "status tags exist" (Open /= Closed)
+  assertMsg "demo parties differ" (treasury /= dealerA)

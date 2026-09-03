@@ -1,0 +1,24 @@
+module TreasuryRfq.Invitation where
+
+import TreasuryRfq.Rfq (RFQ)
+import TreasuryRfq.Types
+
+-- One invitation per dealer so SubmitQuote (to be added) is visible only to treasury and that dealer.
+template RfqInvitation
+  with
+    rfqCid : ContractId RFQ
+    treasury : Party
+    dealer : Party
+    asset : Text
+    quoteCurrency : Text
+    side : Side
+    quantity : Decimal
+  where
+    signatory treasury
+    observer dealer
+
+    ensure
+      quantity > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && treasury /= dealer
