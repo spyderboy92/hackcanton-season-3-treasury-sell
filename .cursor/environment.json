@@ -1,0 +1,4 @@
+{
+  "name": "Private Treasury RFQ (Daml/Canton)",
+  "install": "bash ./.cursor/install.sh"
+}
