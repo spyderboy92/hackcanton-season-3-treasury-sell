@@ -1,0 +1,49 @@
+module TreasuryRfq.Settlement where
+
+import TreasuryRfq.Trade (AcceptedTrade)
+
+-- Mock CIP-56-shaped holding. Isolated here so a later CBTC/cETH adapter can replace Transfer without rewriting RFQ/Quote.
+template TokenHolding
+  with
+    issuer : Party
+    owner : Party
+    symbol : Text
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    ensure
+      amount > 0.0
+        && symbol /= ""
+
+-- Immutable evidence for the auditor. Observer is added only here so competing quotes stay invisible.
+template SettlementReceipt
+  with
+    treasury : Party
+    dealer : Party
+    buyer : Party
+    seller : Party
+    asset : Text
+    assetQuantity : Decimal
+    quoteCurrency : Text
+    paymentAmount : Decimal
+    price : Decimal
+    acceptedTradeCid : ContractId AcceptedTrade
+    auditor : Optional Party
+    settledAt : Time
+  where
+    signatory treasury, dealer
+    observer optionalAuditorToList auditor
+
+    ensure
+      assetQuantity > 0.0
+        && paymentAmount > 0.0
+        && price > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && treasury /= dealer
+
+optionalAuditorToList : Optional Party -> [Party]
+optionalAuditorToList None = []
+optionalAuditorToList (Some p) = [p]

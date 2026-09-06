@@ -1,0 +1,25 @@
+module TreasuryRfq.Rfq where
+
+import TreasuryRfq.Types
+
+-- Shared market request only. Quotes must not be created or accepted on this template,
+-- or invited dealers would see competitor prices via choice arguments and divulgence.
+template RFQ
+  with
+    treasury : Party
+    asset : Text
+    quoteCurrency : Text
+    side : Side
+    quantity : Decimal
+    quoteDeadline : Optional Time
+    invitedDealers : [Party]
+    status : RfqStatus
+  where
+    signatory treasury
+    observer invitedDealers
+
+    ensure
+      quantity > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && not (null invitedDealers)

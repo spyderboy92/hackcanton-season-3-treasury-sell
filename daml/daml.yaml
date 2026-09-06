@@ -1,0 +1,7 @@
+sdk-version: 3.5.1
+name: treasury-rfq
+source: daml
+version: 0.0.1
+dependencies:
+  - daml-prim
+  - daml-stdlib
