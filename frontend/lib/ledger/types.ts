@@ -1,7 +1,17 @@
 /**
  * Ledger payload types.
  *
- * These mirror the Daml records in `daml/` exactly (BUILD-SPEC section 3).
+ * These mirror the Daml records in `daml/`, with two deliberate exceptions the
+ * server decoder reconciles (see `lib/ledger/server/decode.ts`):
+ *
+ *  - `SettlementInstruction` stores `side` and `acceptedAt` on the ledger and
+ *    derives buyer/seller from them, so that no denormalised copy can contradict
+ *    the trade terms. The UI wants the parties named, so this type carries
+ *    `buyer`/`seller` and drops `side`/`acceptedAt`; the decoder applies the same
+ *    rule as `TreasuryRfq.Types.buyerOf`/`sellerOf`.
+ *  - `RfqFill` has no type here at all. It is disclosed to the treasury alone and
+ *    no screen renders it, so it stays internal to the ledger clients.
+ *
  * Rules that must survive the swap from the mock to the real JSON Ledger API:
  *
  *  - `Party` is an opaque Canton party id, e.g. "Treasury-d4d9::1220e254...".

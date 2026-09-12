@@ -389,7 +389,7 @@ export function create(
  * One submission, one atomic transaction. `commands` is a LIST on purpose:
  * two sibling commands submitted together commit atomically while staying
  * separate root nodes, which is not the same thing as nesting one inside the
- * other (see `acceptQuote` in ./commands.ts).
+ * other (see `acceptQuote` in ./ledger.ts).
  */
 export async function submit(
   asParty: Party,
