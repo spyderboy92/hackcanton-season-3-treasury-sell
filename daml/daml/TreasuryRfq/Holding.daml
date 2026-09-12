@@ -1,0 +1,46 @@
+-- | The asset primitive, and nothing else.
+--
+-- TokenHolding references none of the RFQ or trade templates, so it stands alone in its
+-- own module on purpose: this is the CIP-56 replacement seam. A live CBTC or cETH adapter
+-- swaps this module out -- registry-issued holdings with a real lock primitive -- and
+-- Settlement, Quoting and Rfq are untouched, because the only thing they know about an
+-- asset is that it has an owner, a symbol, an amount, and a Transfer choice. Both real
+-- assets are CIP-56 and differ by registry, not by workflow.
+module TreasuryRfq.Holding where
+
+-- Mock CIP-56-shaped holding. Isolated here so a later CBTC/cETH adapter can replace
+-- Transfer without rewriting RFQ/Quote: both real assets are CIP-56 and differ by
+-- registry, not by workflow.
+template TokenHolding
+  with
+    issuer : Party
+    owner : Party
+    symbol : Text
+    amount : Decimal
+  where
+    signatory issuer
+    observer owner
+
+    ensure
+      amount > 0.0
+        && symbol /= ""
+
+    -- Partial transfer: the recipient gets 'transferAmount', the sender keeps the change
+    -- (None when the holding is consumed exactly). The issuer stays the signatory of both
+    -- new holdings, which is authorised because the issuer signs the holding being spent.
+    choice Transfer : (ContractId TokenHolding, Optional (ContractId TokenHolding))
+      with
+        newOwner : Party
+        transferAmount : Decimal
+      controller owner
+      do
+        assertMsg "transferAmount must be positive" (transferAmount > 0.0)
+        assertMsg "transferAmount exceeds the holding balance" (transferAmount <= amount)
+        transferred <- create this with owner = newOwner, amount = transferAmount
+        change <-
+          if transferAmount == amount
+            then pure None
+            else do
+              changeCid <- create this with amount = amount - transferAmount
+              pure (Some changeCid)
+        pure (transferred, change)

@@ -2,10 +2,24 @@ module TreasuryRfq.Rfq where
 
 import TreasuryRfq.Types
 
--- Shared market request only. Quotes must not be created or accepted on this template,
--- or invited dealers would see competitor prices via choice arguments and divulgence.
+-- Shared market request: terms only, NEVER prices.
+--
+-- PRIVACY INVARIANT (the point of this project). Every invited dealer is an observer
+-- of this contract, so every dealer sees this contract's payload, the arguments of
+-- every choice exercised on it, and every consequence of those choices. Therefore:
+--
+--   * no choice on RFQ may take a price, a dealer or a quote id as an argument;
+--   * no choice on RFQ may fetch or exercise a Quote (that would divulge the winning
+--     price to the losing dealers);
+--   * Close is exercised as a SIBLING command in the same submission as Quote.Accept,
+--     never nested inside it, so the losing dealers see only the Close subtree.
+--
+-- Quotes are created and accepted on RfqInvitation/Quote, which are bilateral.
+-- Correlation to those contracts is by 'rfqId' only -- no ContractId cross-references,
+-- because Close archives and recreates this contract and would invalidate them.
 template RFQ
   with
+    rfqId : Text
     treasury : Party
     asset : Text
     quoteCurrency : Text
@@ -19,7 +33,51 @@ template RFQ
     observer invitedDealers
 
     ensure
-      quantity > 0.0
+      rfqId /= ""
+        && quantity > 0.0
         && asset /= ""
         && quoteCurrency /= ""
         && not (null invitedDealers)
+        && notElem treasury invitedDealers
+
+    -- Ends the auction. Takes NO arguments: the winner and the winning price must not
+    -- appear anywhere in this subtree. Archive-and-recreate so dealers observe the
+    -- state change rather than merely losing the contract.
+    choice Close : ContractId RFQ
+      controller treasury
+      do
+        assertMsg "only an Open RFQ can be closed" (status == Open)
+        create this with status = Closed
+
+    -- Withdraws the request unfilled. Also argument-free, for the same reason.
+    choice Cancel : ContractId RFQ
+      controller treasury
+      do
+        assertMsg "only an Open RFQ can be cancelled" (status == Open)
+        create this with status = Cancelled
+
+-- | The right to fill this RFQ, exactly once.
+--
+-- Created by the treasury in the same submission as the RFQ itself, and consumed by
+-- Quote.Accept. Without it the treasury could bind two dealers to the same quantity:
+-- Quote.Accept consults no shared state, so nothing else stops a second acceptance.
+--
+-- WHY A SEPARATE CONTRACT, and not a status check on the RFQ. Accept must not fetch the
+-- RFQ. A fetch node's informees include the stakeholders of the contract fetched, and
+-- every invited dealer observes the RFQ -- so fetching it inside Accept would put a node
+-- of the acceptance subtree in front of the losing dealers. That is the exact leak this
+-- design exists to prevent.
+--
+-- This contract is safe to touch from inside Accept because the treasury is its only
+-- stakeholder: there are no observers, so no dealer -- winner or loser -- is an informee
+-- of the fetch. The winning dealer witnesses the archive only as a consequence of the
+-- Quote it already signs, and learns nothing from it but that a fill right existed.
+-- It carries no price, no dealer and no count of dealers.
+template RfqFill
+  with
+    rfqId : Text
+    treasury : Party
+  where
+    signatory treasury
+
+    ensure rfqId /= ""
