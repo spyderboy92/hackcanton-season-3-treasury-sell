@@ -1,0 +1,22 @@
+# Build context hygiene for the frontend image.
+# node_modules alone is ~500 MB; npm ci inside the image installs a clean,
+# linux-native tree, so the host copy must never enter the context.
+
+node_modules
+.next
+.next-*
+out/
+build/
+*.tsbuildinfo
+next-env.d.ts
+
+.git
+.gitignore
+.DS_Store
+.env*
+.vercel
+coverage/
+
+README.md
+Dockerfile
+.dockerignore

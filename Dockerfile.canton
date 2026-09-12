@@ -1,0 +1,154 @@
+# syntax=docker/dockerfile:1.7
+#
+# Canton service: Daml toolchain -> DAR -> sandbox + seeded demo scenario.
+#
+# There is no official image carrying dpm and Canton 3.5.1, so the toolchain is
+# installed here. Both the JDK base and the dpm components publish linux/arm64
+# and linux/amd64, so this builds natively on Apple Silicon and on x86 alike —
+# no `platform:` pin is needed anywhere in the stack.
+
+########################################################################
+# Stage 1 — toolchain. dpm + the pinned SDK. Slow, and cached hard.
+########################################################################
+FROM eclipse-temurin:21-jdk AS toolchain
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV DPM_HOME=/root/.dpm
+ENV PATH=/root/.dpm/bin:$PATH
+
+# The pinned SDK. Kept as an ARG so it is stated once and flows into the
+# runtime stage, where the Canton jar is addressed by version.
+ARG DAML_SDK_VERSION=3.5.1
+ENV DAML_SDK_VERSION=$DAML_SDK_VERSION
+
+# The installer drops dpm in $HOME/.dpm/bin and pulls the LATEST SDK. This repo
+# pins 3.5.1 in multi-package.yaml, and without an explicit install of that
+# version every build fails with "target dpm-sdk version not installed" — a
+# message that never names the version it wanted.
+#
+# Everything after the install is weight removal, and it has to happen in this
+# same RUN: a file deleted in a later layer still ships in the earlier one.
+#
+#  * `dpm uninstall` retires the unpinned "latest" SDK but leaves its component
+#    directories on disk, so each component is pruned to the exact version the
+#    pinned SDK manifest names. That is ~1.5 GB. `dpm` itself is exempt: the
+#    installer's own binary is the one $HOME/.dpm/bin/dpm links to, while the
+#    manifest names an older assistant, and both are wanted.
+#  * The OCI blob cache is an install-time artefact — another ~2 GB.
+#  * The installer stages every download through /tmp/oras_file_* and does not
+#    clean up: ~700 MB that otherwise ships in the build/test image.
+RUN curl -fsSL https://get.digitalasset.com/install/install.sh | sh \
+ && dpm install "$DAML_SDK_VERSION" \
+ && for v in $(dpm version | tr -d ' *' | grep -v "^$DAML_SDK_VERSION$" | grep -E '^[0-9]'); do \
+      echo "removing unpinned SDK $v"; dpm uninstall "$v" || true; \
+    done \
+ && manifest="/root/.dpm/cache/sdk/open-source/$DAML_SDK_VERSION.yaml" \
+ && test -f "$manifest" \
+ && for comp in /root/.dpm/cache/components/*/; do \
+      name=$(basename "$comp"); \
+      if [ "$name" = "dpm" ]; then continue; fi; \
+      want=$(awk -v c="$name:" '$1==c {getline; print $2}' "$manifest"); \
+      if [ -z "$want" ]; then echo "no manifest entry for $name, keeping all"; continue; fi; \
+      for vdir in "$comp"*/; do \
+        v=$(basename "$vdir"); \
+        [ "$v" = "$want" ] || { echo "pruning $name/$v"; rm -rf "$vdir"; }; \
+      done; \
+      true; \
+    done \
+ && rm -rf /root/.dpm/cache/oci-layout \
+ && rm -rf /tmp/oras_file_* /tmp/hsperfdata_root \
+ && du -sh /root/.dpm \
+ && dpm version
+
+########################################################################
+# Stage 2 — build the DAR.
+########################################################################
+FROM toolchain AS dar
+
+WORKDIR /src
+# Manifests first: editing a .daml file must not invalidate dependency
+# resolution, so the two layers are kept apart.
+COPY multi-package.yaml ./
+COPY daml/daml.yaml ./daml/daml.yaml
+COPY daml-test/daml.yaml ./daml-test/daml.yaml
+
+COPY daml ./daml
+COPY daml-test ./daml-test
+RUN dpm build --all \
+ && ls -l daml/.daml/dist daml-test/.daml/dist
+
+########################################################################
+# Stage 2b — the subset of the SDK the runtime actually invokes.
+#
+# The runtime container runs exactly two things: Canton (the
+# canton-open-source jar) and `dpm script` (the daml-script binary). It never
+# compiles, so damlc, codegen, upgrade-check, daml-new, daml-shell and scribe
+# are dead weight — about 1.1 GB. script-service.jar goes too: that export
+# belongs to damlc's in-IDE script runner, not to the `dpm script` CLI.
+#
+# The deletions are done in a stage of their own because `COPY --from` copies a
+# stage's final tree, so what is removed here never reaches the runtime image.
+# The build stage above keeps the full toolchain, which is what `dpm build` and
+# `dpm test` need.
+########################################################################
+FROM toolchain AS sdk-runtime
+COPY docker/prune-sdk-for-runtime.sh /usr/local/bin/prune-sdk-for-runtime.sh
+RUN chmod +x /usr/local/bin/prune-sdk-for-runtime.sh \
+ && /usr/local/bin/prune-sdk-for-runtime.sh
+
+########################################################################
+# Stage 3 — runtime. The sandbox plus the seed.
+########################################################################
+FROM eclipse-temurin:21-jdk AS runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+
+ARG DAML_SDK_VERSION=3.5.1
+ENV DAML_SDK_VERSION=$DAML_SDK_VERSION \
+    DPM_HOME=/root/.dpm \
+    PATH=/root/.dpm/bin:$PATH \
+    APP_DIR=/opt/treasury-rfq \
+    CANTON_STATE_DIR=/var/lib/canton \
+    CANTON_RUN_DIR=/run/canton
+
+COPY --from=sdk-runtime /root/.dpm /root/.dpm
+
+WORKDIR /opt/treasury-rfq
+
+# The sandbox's own configuration and bootstrap script live inside the Canton
+# jar. Lift them out here rather than vendoring a copy, so they always match the
+# SDK actually installed, then make the bootstrap idempotent.
+#
+# Why this is needed: `dpm sandbox` is a thin wrapper over `canton sandbox`, and
+# `canton sandbox` refuses `--bootstrap` ("bootstrap script cannot be defined
+# together with the 'sandbox' command"). Its built-in bootstrap re-proposes the
+# participant's SynchronizerTrustCertificate on every start, which against a
+# volume that already holds ledger state fails with
+# ALREADY_EXISTS/TOPOLOGY_MAPPING_ALREADY_EXISTS and takes the process down. So
+# the container runs the identical node set through `canton daemon`, with the
+# one non-idempotent call guarded. Same config, same ports, restartable.
+ENV CANTON_JAR=/root/.dpm/cache/components/canton-open-source/${DAML_SDK_VERSION}/lib/canton-open-source-${DAML_SDK_VERSION}.jar
+RUN test -f "$CANTON_JAR" \
+ && (cd /opt/treasury-rfq && jar xf "$CANTON_JAR" sandbox/sandbox.conf sandbox/bootstrap.canton) \
+ && sed -i 's|^\( *\)p\.topology\.synchronizer_trust_certificates\.propose(p, synchId\.logical, featureFlags = featureFlag)$|\1try { p.topology.synchronizer_trust_certificates.propose(p, synchId.logical, featureFlags = featureFlag) } catch { case _: Throwable => println(s"trust certificate for ${p.name} on ${syncDef.name} already present; resuming persisted state") }|' \
+      sandbox/bootstrap.canton \
+ && grep -q 'catch { case _: Throwable' sandbox/bootstrap.canton \
+      || (echo "FATAL: the sandbox bootstrap script no longer matches the patch; restart on a populated volume would fail" && exit 1)
+
+COPY --from=dar /src/daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar ./dar/
+COPY --from=dar /src/daml/.daml/dist/treasury-rfq-0.0.1.dar ./dar/
+COPY docker/canton-container.conf ./canton-container.conf
+COPY docker/canton-entrypoint.sh docker/canton-healthcheck.sh /usr/local/bin/
+
+RUN mkdir -p /var/lib/canton /run/canton \
+ && chmod +x /usr/local/bin/canton-entrypoint.sh /usr/local/bin/canton-healthcheck.sh
+
+EXPOSE 6864 6865
+ENTRYPOINT ["/usr/local/bin/canton-entrypoint.sh"]
