@@ -1,0 +1,367 @@
+-- | Authorization and validation negatives, all via 'submitMustFail'.
+--
+-- Privacy stops a party READING what it should not. These scripts prove the
+-- complementary half: a party cannot WRITE what it is not entitled to, and the model's
+-- own preconditions (deadlines, expiry, positive prices, matching currency) hold.
+--
+-- Each script fails loudly if the model ever starts permitting the submission.
+module Tests.Authorization where
+
+import DA.Assert ((===))
+import DA.Time (addRelTime, hours, minutes)
+import DA.Functor (void)
+import Daml.Script
+
+import TreasuryRfq.Holding (Transfer(..))
+import TreasuryRfq.Quoting (Accept(..), Decline(..), Quote(..), Revise(..), RfqInvitation(..), SubmitQuote(..), Withdraw(..))
+import TreasuryRfq.Rfq (Cancel(..), Close(..), RFQ(..), RfqFill(..))
+import TreasuryRfq.Settlement (AcceptedTrade(..), AllocateAsset(..), AllocatePaymentAndSettle(..))
+import TreasuryRfq.Types (RfqStatus(..), Side(..))
+
+import Tests.Assertions
+import Tests.Fixtures
+
+-- ---------------------------------------------------------------------------
+-- Who may do what
+-- ---------------------------------------------------------------------------
+
+-- | A dealer cannot accept its own quote. Accept is controlled by the treasury, so a
+-- dealer cannot self-deal itself a trade at its own price.
+authDealerCannotAcceptItsOwnQuote : Script ()
+authDealerCannotAcceptItsOwnQuote = do
+  fx <- quotedRfq
+  let p = fx.parties
+  submitMustFail p.dealerB $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  -- Nor can a dealer accept a competitor's quote (it cannot even name the cids in
+  -- practice -- RfqFill has no observers at all; here we hand it both explicitly and the
+  -- ledger still refuses).
+  submitMustFail p.dealerA $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  submitMustFail p.auditor $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  -- ...and the treasury can.
+  _ <- submit p.treasury $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  pure ()
+
+-- | A dealer cannot conjure a Quote out of thin air. Quote is signed by treasury AND
+-- dealer, so the treasury's authority must be delegated through an RfqInvitation; a
+-- bare create by the dealer has no treasury authority behind it.
+authDealerCannotCreateQuoteDirectly : Script ()
+authDealerCannotCreateQuoteDirectly = do
+  fx <- openRfq
+  let p = fx.parties
+  now <- getTime
+  let forged = Quote with
+        rfqId = demoRfqId
+        treasury = p.treasury
+        dealer = p.dealerA
+        asset = demoAsset
+        quoteCurrency = demoCurrency
+        side = Sell
+        quantity = demoQuantity
+        price = 9999.0
+        quoteDeadline = fx.quoteDeadline
+        expiry = None
+        submittedAt = now
+  submitMustFail p.dealerA $ createCmd forged
+  -- The treasury cannot forge one on the dealer's behalf either: both signatures are
+  -- required, and that is what makes a Quote binding.
+  submitMustFail p.treasury $ createCmd forged
+  assertBlind @Quote "no forged quote reached the ledger" p.treasury
+
+-- | A dealer cannot end the auction. Close and Cancel are controlled by the treasury
+-- alone, even though every invited dealer observes the RFQ.
+authDealerCannotCloseOrCancelTheRfq : Script ()
+authDealerCannotCloseOrCancelTheRfq = do
+  fx <- openRfq
+  let p = fx.parties
+  submitMustFail p.dealerA $ exerciseCmd fx.rfqCid Close
+  submitMustFail p.dealerA $ exerciseCmd fx.rfqCid Cancel
+  submitMustFail p.dealerC $ exerciseCmd fx.rfqCid Close
+  submitMustFail p.stranger $ exerciseCmd fx.rfqCid Close
+  -- The RFQ is untouched and still Open.
+  (_, rfq) <- assertOnly @RFQ "RFQ survived the attempts" p.treasury (\r -> r.rfqId == demoRfqId)
+  rfq.status === Open
+
+-- | A closed RFQ cannot be closed or cancelled again.
+authClosedRfqIsTerminal : Script ()
+authClosedRfqIsTerminal = do
+  fx <- acceptedRfq
+  let p = fx.parties
+  submitMustFail p.treasury $ exerciseCmd fx.closedRfqCid Close
+  submitMustFail p.treasury $ exerciseCmd fx.closedRfqCid Cancel
+
+-- | Only the invited dealer can act on its own invitation.
+authOnlyTheInvitedDealerMayQuote : Script ()
+authOnlyTheInvitedDealerMayQuote = do
+  fx <- openRfq
+  let p = fx.parties
+  submitMustFail p.dealerB $ exerciseCmd fx.invitationA SubmitQuote with price = 3000.0, expiry = None
+  submitMustFail p.treasury $ exerciseCmd fx.invitationA SubmitQuote with price = 3000.0, expiry = None
+  submitMustFail p.dealerB $ exerciseCmd fx.invitationA Decline
+  -- Prices must be positive.
+  submitMustFail p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with price = 0.0, expiry = None
+  submitMustFail p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with price = -1.0, expiry = None
+
+-- | Only the quoting dealer may revise or withdraw its quote.
+authOnlyTheQuotingDealerMayReviseOrWithdraw : Script ()
+authOnlyTheQuotingDealerMayReviseOrWithdraw = do
+  fx <- quotedRfq
+  let p = fx.parties
+  submitMustFail p.treasury $ exerciseCmd fx.quoteA Revise with newPrice = 1.0
+  submitMustFail p.dealerB $ exerciseCmd fx.quoteA Revise with newPrice = 1.0
+  submitMustFail p.treasury $ exerciseCmd fx.quoteA Withdraw
+  submitMustFail p.dealerA $ exerciseCmd fx.quoteA Revise with newPrice = 0.0
+
+-- ---------------------------------------------------------------------------
+-- Deadlines
+-- ---------------------------------------------------------------------------
+
+-- | Once the RFQ's quote deadline has passed, the auction is shut: no new quote, no
+-- revision of a standing quote.
+authNoQuotingAfterTheDeadline : Script ()
+authNoQuotingAfterTheDeadline = do
+  fx <- openRfq
+  let p = fx.parties
+  -- Dealer A quotes in time; Dealer B leaves its invitation outstanding.
+  quoteA <- submit p.dealerA $
+    exerciseCmd fx.invitationA SubmitQuote with price = priceDealerA, expiry = None
+
+  -- The fixture deadline is now + 1 hour; step past it.
+  passTime (hours 2)
+
+  submitMustFail p.dealerB $
+    exerciseCmd fx.invitationB SubmitQuote with price = priceDealerB, expiry = None
+  submitMustFail p.dealerA $ exerciseCmd quoteA Revise with newPrice = 3100.0
+
+  -- The treasury may still accept a quote that was submitted in time: the deadline
+  -- closes the bidding window, it does not void the bids.
+  _ <- submit p.treasury $ exerciseCmd quoteA Accept with fillCid = fx.fillCid
+  pure ()
+
+-- | REGRESSION TEST (a bug we fixed): Withdraw must not be an escape hatch from the
+-- quote deadline.
+--
+-- The bug: Quote.Withdraw recreates the RfqInvitation, and an earlier version of the
+-- model dropped 'quoteDeadline' when it did so. That handed a dealer a deadline-free
+-- invitation, so a dealer that had quoted before the cut-off could withdraw AFTER the
+-- cut-off and re-submit at a better price -- last look, in a workflow whose whole point
+-- is that nobody gets last look. Quote now carries 'quoteDeadline' precisely so
+-- Withdraw can restore it.
+--
+-- Withdraw itself is deliberately still allowed after the deadline (pulling your price
+-- off the table harms nobody); what must fail is the re-quote.
+authWithdrawIsNotAnEscapeFromTheDeadline : Script ()
+authWithdrawIsNotAnEscapeFromTheDeadline = do
+  fx <- quotedRfq
+  let p = fx.parties
+
+  passTime (hours 2)
+
+  restored <- submit p.dealerA $ exerciseCmd fx.quoteA Withdraw
+  (_, invitation) <- assertOnly @RfqInvitation "the restored invitation" p.dealerA (\i -> i.dealer == p.dealerA)
+  -- The deadline survived the round trip. If this ever becomes None, the assertion
+  -- below is the one that will catch the regression.
+  invitation.quoteDeadline === fx.quoteDeadline
+
+  submitMustFail p.dealerA $ exerciseCmd restored SubmitQuote with price = 3500.0, expiry = None
+  assertBlind @Quote "no post-deadline quote was minted" p.dealerA
+
+-- | Expiry is the dealer's own clock: a quote cannot be minted already stale, cannot be
+-- revised once stale, and cannot be accepted once stale.
+authExpiredQuoteCannotBeAccepted : Script ()
+authExpiredQuoteCannotBeAccepted = do
+  fx <- openRfq
+  let p = fx.parties
+  now <- getTime
+
+  -- An expiry in the past is rejected up front.
+  submitMustFail p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with
+    price = priceDealerA
+    expiry = Some (addRelTime now (minutes (-1)))
+
+  quoteA <- submit p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with
+    price = priceDealerA
+    expiry = Some (addRelTime now (minutes 10))
+
+  passTime (minutes 20)
+
+  submitMustFail p.treasury $ exerciseCmd quoteA Accept with fillCid = fx.fillCid
+  submitMustFail p.dealerA $ exerciseCmd quoteA Revise with newPrice = 3025.0
+  assertBlind @AcceptedTrade "an expired quote produced no trade" p.treasury
+
+-- ---------------------------------------------------------------------------
+-- Settlement authorization and validation
+-- ---------------------------------------------------------------------------
+
+-- | Only the seller allocates the asset leg, and only the buyer pays.
+authSettlementLegsAreControlledByTheRightSide : Script ()
+authSettlementLegsAreControlledByTheRightSide = do
+  fx <- acceptedRfq
+  let p = fx.parties
+  -- side == Sell, so seller = treasury, buyer = Dealer B. The buyer cannot allocate the
+  -- seller's asset leg...
+  submitMustFail p.dealerB $ exerciseCmd fx.tradeCid AllocateAsset with
+    assetHoldingCid = fx.treasuryAsset
+    auditor = Some p.auditor
+  -- ...nor can an outsider.
+  submitMustFail p.dealerA $ exerciseCmd fx.tradeCid AllocateAsset with
+    assetHoldingCid = fx.treasuryAsset
+    auditor = None
+
+  instruction <- submit p.treasury $ exerciseCmd fx.tradeCid AllocateAsset with
+    assetHoldingCid = fx.treasuryAsset
+    auditor = Some p.auditor
+
+  -- The seller cannot pay itself; only the buyer may complete the DvP.
+  submitMustFail p.treasury $
+    exerciseCmd instruction AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+  submitMustFail p.dealerA $
+    exerciseCmd instruction AllocatePaymentAndSettle with paymentHoldingCid = fx.cashA
+
+-- | The seller cannot allocate a holding it does not own, or the wrong asset, or one
+-- too small to cover the traded quantity.
+authAssetAllocationIsValidated : Script ()
+authAssetAllocationIsValidated = do
+  fx <- acceptedRfq
+  let p = fx.parties
+  -- Dealer B's cash is not the treasury's to allocate, and it is not cETH.
+  submitMustFail p.treasury $ exerciseCmd fx.tradeCid AllocateAsset with
+    assetHoldingCid = fx.cashB
+    auditor = None
+  -- A cETH holding that is too small.
+  dust <- mintHolding p.registry p.treasury demoAsset 1.0
+  submitMustFail p.treasury $ exerciseCmd fx.tradeCid AllocateAsset with
+    assetHoldingCid = dust
+    auditor = None
+
+-- | The cash leg is validated too: right currency, right owner, enough of it.
+authPaymentAllocationIsValidated : Script ()
+authPaymentAllocationIsValidated = do
+  fx <- allocatedRfq
+  let p = fx.parties
+  -- The buyer must attach the seller's disclosed holding to settle at all; see
+  -- 'Tests.Fixtures.buyerSettlementOptions'.
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+
+  -- Wrong currency: Dealer B tries to pay in cETH.
+  wrongCurrency <- mintHolding p.registry p.dealerB demoAsset 100.0
+  submitMustFail opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = wrongCurrency
+
+  -- Right currency, not enough of it: 30,000 USD against a 30,400 USD obligation.
+  short <- mintHolding p.registry p.dealerB demoCurrency 30000.0
+  submitMustFail opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = short
+
+  -- Someone else's cash, in the right currency and amount, is still not payment.
+  notMine <- mintHolding p.registry p.dealerA demoCurrency winningPayment
+  submitMustFail opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = notMine
+
+  -- Nothing moved: the instruction is still outstanding and an exact-amount holding
+  -- settles it cleanly.
+  exact <- mintHolding p.registry p.dealerB demoCurrency winningPayment
+  _ <- submit opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = exact
+  pure ()
+
+-- | A holding can only be moved by its owner, and only up to its balance.
+authHoldingTransferIsOwnerOnly : Script ()
+authHoldingTransferIsOwnerOnly = do
+  fx <- openRfq
+  let p = fx.parties
+  -- Dealer A cannot spend Dealer B's cash...
+  submitMustFail p.dealerA $
+    exerciseCmd fx.cashB Transfer with newOwner = p.dealerA, transferAmount = 1.0
+  -- ...nor can the issuer move it on the owner's behalf.
+  submitMustFail p.registry $
+    exerciseCmd fx.cashB Transfer with newOwner = p.dealerA, transferAmount = 1.0
+  -- The owner cannot overdraw, and cannot move a non-positive amount.
+  submitMustFail p.treasury $
+    exerciseCmd fx.treasuryAsset Transfer with
+      newOwner = p.dealerB
+      transferAmount = treasuryAssetBalance + 0.0000000001
+  submitMustFail p.treasury $
+    exerciseCmd fx.treasuryAsset Transfer with newOwner = p.dealerB, transferAmount = 0.0
+
+-- ---------------------------------------------------------------------------
+-- Single fill: the hole this suite found, now closed
+-- ---------------------------------------------------------------------------
+
+-- | An RFQ can be filled ONCE.
+--
+-- HISTORY. This suite originally shipped a script named
+-- @knownLimitationTreasuryCanAcceptTwoQuotes@ which passed: nothing in the model stopped
+-- the treasury accepting two quotes for the same rfqId, so it could bind two dealers to
+-- the same 10 cETH and be short the asset at settlement. That was a real hole, found by
+-- the tests and since closed with 'TreasuryRfq.Rfq.RfqFill' -- a single-use fill right,
+-- signed by the treasury and observed by nobody, that @Quote.Accept@ consumes.
+--
+-- The privacy consequence of the fix is asserted separately and is the more important
+-- half: see 'Tests.Privacy.privacyFillRightIsInvisibleToDealers'.
+authTreasuryCannotAcceptTwoQuotes : Script ()
+authTreasuryCannotAcceptTwoQuotes = do
+  fx <- quotedRfq
+  let p = fx.parties
+
+  -- The first acceptance consumes the fill right.
+  _ <- submit p.treasury $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+
+  -- The second is rejected on the stale ContractId: there is no second fill right to
+  -- spend, so Dealer A cannot also be bound to the same 10 cETH.
+  submitMustFail p.treasury $ exerciseCmd fx.quoteA Accept with fillCid = fx.fillCid
+
+  -- Exactly one trade exists, and it is the winner's.
+  (_, trade) <- assertOnly @AcceptedTrade "one fill per RFQ" p.treasury (\t -> t.rfqId == demoRfqId)
+  trade.dealer === p.dealerB
+  trade.price === priceDealerB
+
+  -- The losing quote survives untouched -- it was never accepted, merely not filled.
+  (_, losing) <- assertOnly @Quote "the losing quote is still live" p.dealerA (\q -> q.dealer == p.dealerA)
+  losing.price === priceDealerA
+
+-- | The near misses around the fill right.
+--
+-- A fill right is not a bearer token the treasury can point at any auction: it names an
+-- rfqId, and Accept checks it. Nor can a spent one be replayed.
+authFillRightIsScopedAndSingleUse : Script ()
+authFillRightIsScopedAndSingleUse = do
+  fx <- quotedRfq
+  let p = fx.parties
+
+  -- A fill right minted for a DIFFERENT RFQ cannot fill this one.
+  otherFill <- submit p.treasury $
+    createCmd RfqFill with rfqId = "RFQ-2026-0002", treasury = p.treasury
+  submitMustFail p.treasury $ exerciseCmd fx.quoteB Accept with fillCid = otherFill
+  assertBlind @AcceptedTrade "a mismatched fill right created no trade" p.treasury
+
+  -- The RFQ's own fill right works...
+  _ <- submit p.treasury $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  -- ...and once spent it cannot be replayed against another dealer's quote, nor can the
+  -- unrelated one be substituted for it.
+  submitMustFail p.treasury $ exerciseCmd fx.quoteC Accept with fillCid = fx.fillCid
+  submitMustFail p.treasury $ exerciseCmd fx.quoteC Accept with fillCid = otherFill
+  void $ assertVisible @AcceptedTrade "still exactly one trade" p.treasury 1
+
+-- | The fill right is the treasury's alone: no dealer can mint one, and no dealer can
+-- archive the treasury's.
+authFillRightIsTreasuryOnly : Script ()
+authFillRightIsTreasuryOnly = do
+  fx <- openRfq
+  let p = fx.parties
+  -- A dealer cannot mint a fill right in the treasury's name: the treasury is the sole
+  -- signatory.
+  submitMustFail p.dealerB $ createCmd RfqFill with rfqId = demoRfqId, treasury = p.treasury
+
+  -- Minting one naming ITSELF as treasury is legal but worthless. It is signed by the
+  -- dealer alone, so the treasury is not a stakeholder and cannot even name it in a
+  -- submission -- and if it could, Accept's fill.treasury check would reject it.
+  strayFill <- submit p.dealerB $ createCmd RfqFill with rfqId = demoRfqId, treasury = p.dealerB
+  quoteB <- submit p.dealerB $
+    exerciseCmd fx.invitationB SubmitQuote with price = priceDealerB, expiry = None
+  submitMustFail p.treasury $ exerciseCmd quoteB Accept with fillCid = strayFill
+  assertBlind @AcceptedTrade "a counterfeit fill right created no trade" p.treasury
+
+  -- And no dealer can destroy the treasury's fill right to stall the auction: RfqFill
+  -- has no observers, so a dealer cannot address it at all.
+  submitMustFail p.dealerB $ archiveCmd fx.fillCid
+  void $ assertVisible @RfqFill "the treasury's fill right is untouched" p.treasury 1

@@ -1,0 +1,250 @@
+-- | The happy path, end to end: RFQ -> three quotes -> accept + close as siblings ->
+-- two-step atomic DvP -> receipt.
+--
+-- These scripts prove the workflow WORKS. Tests.Privacy proves it works without
+-- leaking, and Tests.Authorization proves it cannot be driven by the wrong party.
+module Tests.Lifecycle where
+
+import DA.Assert ((===))
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import DA.List (sort)
+import Daml.Script
+
+import TreasuryRfq.Holding (TokenHolding(..))
+import TreasuryRfq.Quoting (Decline(..), Quote(..), Revise(..), RfqInvitation(..), SubmitQuote(..), Withdraw(..))
+import TreasuryRfq.Rfq (Cancel(..), RFQ(..), RfqFill(..))
+import TreasuryRfq.Settlement (AcceptedTrade(..), SettlementInstruction(..), SettlementReceipt(..))
+import TreasuryRfq.Types (RfqStatus(..), Side(..))
+
+import Tests.Assertions
+import Tests.Fixtures
+
+-- | An open RFQ is visible to exactly its three invited dealers, carries terms and no
+-- price, and each dealer holds exactly one invitation -- its own.
+lifecycleOpenRfqIsVisibleToInvitedDealers : Script ()
+lifecycleOpenRfqIsVisibleToInvitedDealers = do
+  fx <- openRfq
+  let p = fx.parties
+
+  (_, rfq) <- assertOnly @RFQ "open RFQ, seen by the treasury" p.treasury (\r -> r.rfqId == demoRfqId)
+  rfq.status === Open
+  rfq.side === Sell
+  rfq.quantity === demoQuantity
+  rfq.asset === demoAsset
+  rfq.quoteCurrency === demoCurrency
+
+  -- Every invited dealer sees the same terms-only contract...
+  forA_ [p.dealerA, p.dealerB, p.dealerC] $ \d ->
+    void $ assertOnly @RFQ "open RFQ, seen by an invited dealer" d (\r -> r.status == Open)
+
+  -- ...and exactly one invitation, addressed to itself. A dealer cannot even count its
+  -- competitors from its own ACS: RfqInvitation is bilateral.
+  forA_ [p.dealerA, p.dealerB, p.dealerC] $ \d ->
+    void $ assertOnly @RfqInvitation "own invitation" d (\i -> i.dealer == d)
+
+  -- The treasury holds all three, plus the single-use right to fill this RFQ once.
+  void $ assertVisible @RfqInvitation "all invitations, seen by the treasury" p.treasury 3
+  void $ assertOnly @RfqFill "the RFQ opened with exactly one fill right" p.treasury
+    (\f -> f.rfqId == demoRfqId)
+
+-- | Opening balances are exactly spec section 4, and a dealer cannot see another
+-- dealer's cash even though the Registry issued all of it.
+lifecycleOpeningBalances : Script ()
+lifecycleOpeningBalances = do
+  fx <- openRfq
+  let p = fx.parties
+
+  (_, eth) <- assertOnly @TokenHolding "treasury cETH" p.treasury (\h -> h.symbol == demoAsset)
+  eth.amount === treasuryAssetBalance
+
+  forA_ [p.dealerA, p.dealerB, p.dealerC] $ \d -> do
+    (_, cash) <- assertOnly @TokenHolding "dealer cash" d (\h -> h.owner == d)
+    cash.amount === dealerCashBalance
+    cash.symbol === demoCurrency
+
+  -- The Registry signs every holding, so it is the only party with the full picture.
+  void $ assertVisible @TokenHolding "all holdings, seen by the registry" p.registry 4
+
+-- | Three quotes reach the treasury, at the three spec prices, and the invitations are
+-- consumed on the way (one live quote per invitation).
+lifecycleThreeQuotesReachTheTreasury : Script ()
+lifecycleThreeQuotesReachTheTreasury = do
+  fx <- quotedRfq
+  let p = fx.parties
+
+  quotes <- assertVisible @Quote "all three quotes, seen by the treasury" p.treasury 3
+  let priced = sort (map (\(_, q) -> q.price) quotes)
+  priced === sort [priceDealerA, priceDealerB, priceDealerC]
+
+  -- Submitting consumed the invitation, so nobody can double-quote off one invite.
+  assertAllBlind @RfqInvitation "invitation consumed by SubmitQuote" [p.dealerA, p.dealerB, p.dealerC]
+  assertBlind @RfqInvitation "invitations all consumed" p.treasury
+
+-- | Accept and Close in one submission: the trade is bound, the auction is closed, and
+-- the losing dealers' quotes are still live and still private.
+lifecycleAcceptAndClose : Script ()
+lifecycleAcceptAndClose = do
+  fx <- acceptedRfq
+  let p = fx.parties
+
+  (_, trade) <- assertOnly @AcceptedTrade "accepted trade" p.treasury (\t -> t.rfqId == demoRfqId)
+  trade.dealer === p.dealerB
+  trade.price === priceDealerB
+  trade.quantity === demoQuantity
+
+  (_, rfq) <- assertOnly @RFQ "closed RFQ" p.treasury (\r -> r.rfqId == demoRfqId)
+  rfq.status === Closed
+
+  -- The winner's quote was consumed by Accept; the two losing quotes are untouched.
+  void $ assertVisible @Quote "losing quotes still live" p.treasury 2
+
+  -- Accept spent the fill right, so this RFQ can never be filled again.
+  assertBlind @RfqFill "the fill right was spent by Accept" p.treasury
+
+-- | Two-step DvP: the seller allocates, the buyer pays, both legs move in one
+-- transaction and a receipt is issued.
+lifecycleSettlement : Script ()
+lifecycleSettlement = do
+  fx <- settledRfq
+  let p = fx.parties
+
+  (_, receipt) <- assertOnly @SettlementReceipt "settlement receipt" p.treasury (\r -> r.rfqId == demoRfqId)
+  receipt.buyer === p.dealerB
+  receipt.seller === p.treasury
+  receipt.assetQuantity === demoQuantity
+  receipt.paymentAmount === winningPayment
+  receipt.price === priceDealerB
+  receipt.auditor === Some p.auditor
+
+  -- The instruction is consumed by settlement: no half-settled contract survives.
+  assertBlind @SettlementInstruction "instruction consumed by settlement" p.treasury
+
+-- | Decline leaves no trace: the invitation is archived and no Quote is ever created,
+-- so the treasury learns nothing beyond "this dealer is out".
+lifecycleDeclineLeavesNoQuote : Script ()
+lifecycleDeclineLeavesNoQuote = do
+  fx <- openRfq
+  let p = fx.parties
+  submit p.dealerC $ exerciseCmd fx.invitationC Decline
+  assertBlind @RfqInvitation "declined invitation is gone" p.dealerC
+  assertBlind @Quote "declining creates no quote" p.dealerC
+  assertBlind @Quote "declining creates no quote for the treasury either" p.treasury
+  -- The other two invitations are unaffected.
+  void $ assertVisible @RfqInvitation "remaining invitations" p.treasury 2
+
+-- | Revise replaces the price in place and stays bilateral.
+lifecycleReviseUpdatesPrice : Script ()
+lifecycleReviseUpdatesPrice = do
+  fx <- quotedRfq
+  let p = fx.parties
+  _ <- submit p.dealerA $ exerciseCmd fx.quoteA Revise with newPrice = 3035.0
+  (_, revised) <- assertOnly @Quote "revised quote" p.dealerA (\q -> q.dealer == p.dealerA)
+  revised.price === 3035.0
+  -- Still exactly three quotes on the treasury's side: Revise is an update, not an add.
+  void $ assertVisible @Quote "quote count after revise" p.treasury 3
+  -- And the competitor still sees only its own quote, at its own unchanged price.
+  (_, competitorView) <- assertOnly @Quote "competitor still blind to a revised quote" p.dealerC
+    (\q -> q.dealer == p.dealerC)
+  competitorView.price === priceDealerC
+
+-- | Withdraw pulls the price off the table and hands the invitation back, so the dealer
+-- stays in the auction and can quote again before the deadline.
+lifecycleWithdrawRestoresInvitation : Script ()
+lifecycleWithdrawRestoresInvitation = do
+  fx <- quotedRfq
+  let p = fx.parties
+  restored <- submit p.dealerA $ exerciseCmd fx.quoteA Withdraw
+  assertBlind @Quote "withdrawn quote is gone" p.dealerA
+  (_, invitation) <- assertOnly @RfqInvitation "invitation handed back" p.dealerA (\i -> i.dealer == p.dealerA)
+  -- The restored invitation carries the ORIGINAL deadline (see Tests.Authorization for
+  -- the regression test that this cannot be used to escape it).
+  invitation.quoteDeadline === fx.quoteDeadline
+  _ <- submit p.dealerA $ exerciseCmd restored SubmitQuote with price = 3050.0, expiry = None
+  (_, requoted) <- assertOnly @Quote "re-quoted" p.dealerA (\q -> q.dealer == p.dealerA)
+  requoted.price === 3050.0
+
+-- | Cancel is the unfilled exit: dealers observe Cancelled, and no trade is ever born.
+lifecycleCancelledRfq : Script ()
+lifecycleCancelledRfq = do
+  fx <- quotedRfq
+  let p = fx.parties
+  _ <- submit p.treasury $ exerciseCmd fx.rfqCid Cancel
+  forA_ [p.dealerA, p.dealerB, p.dealerC] $ \d ->
+    void $ assertOnly @RFQ "cancelled RFQ" d (\r -> r.status == Cancelled)
+  assertAllBlind @AcceptedTrade "cancelling creates no trade"
+    [p.treasury, p.dealerA, p.dealerB, p.dealerC]
+
+  -- Cancel is argument-free and touches nothing but the RFQ, so the unspent fill right
+  -- outlives it: the treasury retires it itself. Harmless while it lives -- a fill right
+  -- can only ever be spent against a Quote for the same rfqId, and Cancel does not
+  -- archive the quotes either -- but it should not be left lying around.
+  void $ assertOnly @RfqFill "the fill right survives Cancel" p.treasury (\f -> f.rfqId == demoRfqId)
+  submit p.treasury $ archiveCmd fx.fillCid
+  assertBlind @RfqFill "and the treasury retires it" p.treasury
+
+-- | Archiving is signatory-only, for every template in the model.
+--
+-- Besides being the obvious invariant, this exercises the implicit Archive choice on
+-- each template so the coverage report reflects the model honestly.
+lifecycleArchiveIsSignatoryOnly : Script ()
+lifecycleArchiveIsSignatoryOnly = do
+  fx <- openRfq
+  let p = fx.parties
+
+  -- RFQ: observed by three dealers, signed by the treasury alone.
+  submitMustFail p.dealerA $ archiveCmd fx.rfqCid
+  -- RfqInvitation: the dealer observes it but cannot archive it.
+  submitMustFail p.dealerA $ archiveCmd fx.invitationA
+  -- TokenHolding: the owner observes it, the Registry signs it.
+  submitMustFail p.treasury $ archiveCmd fx.treasuryAsset
+  -- RfqFill: nobody but the treasury is even a stakeholder, so nobody else can touch it.
+  submitMustFail p.dealerA $ archiveCmd fx.fillCid
+  submitMustFail p.registry $ archiveCmd fx.fillCid
+
+  quoteA <- submit p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with price = priceDealerA, expiry = None
+  -- Quote is bilateral, so neither side can unilaterally destroy the evidence.
+  submitMustFail p.dealerA $ archiveCmd quoteA
+  submitMustFail p.treasury $ archiveCmd quoteA
+  submit (actAs [p.treasury, p.dealerA]) $ archiveCmd quoteA
+
+  submit p.treasury $ archiveCmd fx.invitationB
+  submit p.treasury $ archiveCmd fx.rfqCid
+  submit p.treasury $ archiveCmd fx.fillCid
+  submit p.registry $ archiveCmd fx.cashC
+
+-- | The AcceptedTrade is archivable only by treasury AND dealer acting together:
+-- neither side can unilaterally tear up a binding trade.
+lifecycleAcceptedTradeArchiveIsBilateral : Script ()
+lifecycleAcceptedTradeArchiveIsBilateral = do
+  fx <- acceptedRfq
+  let p = fx.parties
+  submitMustFail p.treasury $ archiveCmd fx.tradeCid
+  submitMustFail p.dealerB $ archiveCmd fx.tradeCid
+  submitMustFail p.dealerA $ archiveCmd fx.tradeCid
+  submit (actAs [p.treasury, p.dealerB]) $ archiveCmd fx.tradeCid
+  assertBlind @AcceptedTrade "the trade was torn up jointly" p.treasury
+
+-- | Same for the half-settled instruction: the auditor named on it has no say, and
+-- neither side can drop it alone.
+lifecycleInstructionArchiveIsBilateral : Script ()
+lifecycleInstructionArchiveIsBilateral = do
+  fx <- allocatedRfq
+  let p = fx.parties
+  submitMustFail p.dealerB $ archiveCmd fx.instructionCid
+  submitMustFail p.treasury $ archiveCmd fx.instructionCid
+  submitMustFail p.auditor $ archiveCmd fx.instructionCid
+  submit (actAs [p.treasury, p.dealerB]) $ archiveCmd fx.instructionCid
+  assertBlind @SettlementInstruction "the instruction was dropped jointly" p.dealerB
+
+-- | The receipt is immutable evidence: the auditor that reads it cannot destroy it, and
+-- neither counterparty can do so alone.
+lifecycleReceiptArchiveIsBilateral : Script ()
+lifecycleReceiptArchiveIsBilateral = do
+  fx <- settledRfq
+  let p = fx.parties
+  submitMustFail p.auditor $ archiveCmd fx.receiptCid
+  submitMustFail p.treasury $ archiveCmd fx.receiptCid
+  submitMustFail p.dealerB $ archiveCmd fx.receiptCid
+  submit (actAs [p.treasury, p.dealerB]) $ archiveCmd fx.receiptCid
+  assertBlind @SettlementReceipt "the receipt was retired jointly" p.auditor

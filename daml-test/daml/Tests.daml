@@ -1,13 +1,126 @@
-module Tests where
+-- | Suite index for the Treasury RFQ contract model.
+--
+-- @dpm test --package-root daml-test@ discovers and runs every @Script@ in this
+-- package, so this module is a map rather than a runner. It re-exports the whole suite
+-- so a reader (or the IDE) has one place to start, and it provides two aggregate
+-- entry points for running the suite from a ledger.
+--
+-- THE MAP
+--
+-- [Tests.Fixtures]  Party allocation and the spec section 4 scenario, as a chain of
+--                   stage records: openRfq -> quotedRfq -> acceptedRfq -> allocatedRfq
+--                   -> settledRfq. The sibling-command submission of @Quote.Accept@ and
+--                   @RFQ.Close@ lives in 'acceptedRfq', with the reasoning at the call
+--                   site. Every constant in the demo (10 cETH, 3020/3040/3010, 25 cETH,
+--                   1,000,000 USD) is defined here and nowhere else.
+--
+-- [Tests.Assertions] 'assertVisible' / 'assertBlind' / 'assertOnly': ACS queries issued
+--                   AS a party, with failure messages that name the party, the template
+--                   and the counts.
+--
+-- [Tests.Lifecycle] The happy path works: RFQ, three quotes, accept + close, two-step
+--                   DvP, receipt -- plus Decline, Revise, Withdraw, Cancel and
+--                   signatory-only archival.
+--
+-- [Tests.Privacy]   THE CENTREPIECE. What each party cannot see, asserted from that
+--                   party's own ACS at every stage. Losing dealers, the winner, the
+--                   auditor, the registry and an uninvited stranger -- including
+--                   'privacyFillRightIsInvisibleToDealers', which proves the single-fill
+--                   RfqFill token discloses nothing to anyone but the treasury.
+--
+-- [Tests.Authorization] What each party cannot do: 'submitMustFail' on self-accept,
+--                   forged quotes, dealer-driven Close/Cancel, post-deadline quoting
+--                   (including the Withdraw-then-re-quote regression), expired quotes,
+--                   double-filling one RFQ, wrong-side settlement legs and
+--                   mis-denominated payment.
+--
+-- [Tests.Settlement] DvP balances before and after, atomicity under a failed cash leg,
+--                   exact-payment and change arithmetic, and the CancelAllocation
+--                   round trip.
+--
+-- [Demo.Bootstrap]  NOT a test. Seeds a live sandbox with the same scenario, stopping
+--                   before any quote is submitted so the demo can be driven from the UI.
+module Tests
+  ( module Tests.Assertions
+  , module Tests.Authorization
+  , module Tests.Fixtures
+  , module Tests.Lifecycle
+  , module Tests.Privacy
+  , module Tests.Settlement
+  , privacySuite
+  , fullSuite
+  ) where
 
 import Daml.Script
-import TreasuryRfq.Types (Side(..), RfqStatus(..))
 
--- Proves the test package can import contract types; privacy cases land in a later ticket.
-scaffoldImportsCompile : Script ()
-scaffoldImportsCompile = script do
-  treasury <- allocateParty "Treasury"
-  dealerA <- allocateParty "DealerA"
-  assertMsg "side tags exist" (Buy /= Sell)
-  assertMsg "status tags exist" (Open /= Closed)
-  assertMsg "demo parties differ" (treasury /= dealerA)
+import Tests.Assertions
+import Tests.Authorization
+import Tests.Fixtures
+import Tests.Lifecycle
+import Tests.Privacy
+import Tests.Settlement
+
+-- | The disclosure assertions on their own: the evidence for the project's central
+-- claim, runnable as a single script.
+privacySuite : Script ()
+privacySuite = do
+  privacyInvitationsAreBilateral
+  privacyQuotesAreInvisibleToCompetitors
+  privacyFillRightIsInvisibleToDealers
+  privacyLosingDealerBlindAfterAccept
+  privacySettlementInstructionIsBilateral
+  privacyReceiptDisclosure
+  privacyAuditorSeesOnlyTheReceipt
+  privacyStrangerSeesNothing
+  privacyHoldingsAreNotBroadcast
+  privacyLosingDealerFinalAcs
+
+-- | Everything, in one script, for running the suite against a real ledger where the
+-- per-script test runner is not available.
+fullSuite : Script ()
+fullSuite = do
+  -- Lifecycle
+  lifecycleOpenRfqIsVisibleToInvitedDealers
+  lifecycleOpeningBalances
+  lifecycleThreeQuotesReachTheTreasury
+  lifecycleAcceptAndClose
+  lifecycleSettlement
+  lifecycleDeclineLeavesNoQuote
+  lifecycleReviseUpdatesPrice
+  lifecycleWithdrawRestoresInvitation
+  lifecycleCancelledRfq
+  lifecycleArchiveIsSignatoryOnly
+  lifecycleAcceptedTradeArchiveIsBilateral
+  lifecycleInstructionArchiveIsBilateral
+  lifecycleReceiptArchiveIsBilateral
+
+  -- Privacy
+  privacySuite
+
+  -- Authorization
+  authDealerCannotAcceptItsOwnQuote
+  authDealerCannotCreateQuoteDirectly
+  authDealerCannotCloseOrCancelTheRfq
+  authClosedRfqIsTerminal
+  authOnlyTheInvitedDealerMayQuote
+  authOnlyTheQuotingDealerMayReviseOrWithdraw
+  authNoQuotingAfterTheDeadline
+  authWithdrawIsNotAnEscapeFromTheDeadline
+  authExpiredQuoteCannotBeAccepted
+  authSettlementLegsAreControlledByTheRightSide
+  authAssetAllocationIsValidated
+  authPaymentAllocationIsValidated
+  authHoldingTransferIsOwnerOnly
+  authTreasuryCannotAcceptTwoQuotes
+  authFillRightIsScopedAndSingleUse
+  authFillRightIsTreasuryOnly
+
+  -- Settlement
+  settlementRequiresDisclosureOfTheSellersLeg
+  settlementMovesBothLegs
+  settlementProducesCorrectChangeHoldings
+  settlementWithExactPaymentLeavesNoChange
+  settlementIsAtomicOnFailure
+  settlementPinnedAssetCanBeSpentBySeller
+  settlementCancelAllocationRoundTrip
+  settlementReceiptArithmetic

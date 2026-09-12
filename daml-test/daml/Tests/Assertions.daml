@@ -1,0 +1,60 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
+-- | Disclosure assertions, factored out so every privacy claim in this suite reads
+-- as one line and fails with a message that names the party, the template and the
+-- counts involved.
+--
+-- The important helper here is 'assertBlind': proving that a party CANNOT see a
+-- contract is the whole point of the suite, and it is expressed as an ACS query
+-- issued AS that party. Daml Script's 'query' returns exactly what the ledger API
+-- would hand that party, so an empty result is ledger-enforced privacy, not a UI
+-- filter.
+module Tests.Assertions where
+
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import Daml.Script
+
+-- | Query the ACS as @p@ and assert it holds exactly @expected@ contracts of @t@.
+-- Returns them so the caller can go on to assert on their payloads.
+assertVisible
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> Party -> Int -> Script [(ContractId t, t)]
+assertVisible label p expected = do
+  cs <- query @t p
+  assertMsg
+    ( label <> ": party " <> show p <> " should see " <> show expected
+        <> " contract(s), but sees " <> show (length cs) <> ": " <> show (map snd cs)
+    )
+    (length cs == expected)
+  pure cs
+
+-- | The negative assertion this project exists to make: @p@ sees no @t@ at all.
+assertBlind
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> Party -> Script ()
+assertBlind label p = void (assertVisible @t label p 0)
+
+-- | Same, for a whole set of parties, so a leak to any one of them names that one.
+assertAllBlind
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> [Party] -> Script ()
+assertAllBlind label ps = forA_ ps (assertBlind @t label)
+
+-- | Query as @p@ and assert the single visible @t@ satisfies a predicate.
+assertOnly
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> Party -> (t -> Bool) -> Script (ContractId t, t)
+assertOnly label p predicate = do
+  cs <- assertVisible @t label p 1
+  case cs of
+    [(cid, c)] -> do
+      assertMsg
+        (label <> ": the one contract " <> show p <> " sees is the wrong one: " <> show c)
+        (predicate c)
+      pure (cid, c)
+    _ -> abort (label <> ": unreachable, assertVisible already pinned the count")

@@ -1,0 +1,243 @@
+-- | Delivery-versus-payment: balances before and after, atomicity under failure, and
+-- the un-allocate path.
+--
+-- The model deliberately has no single @Settle@ choice. The treasury is not a
+-- stakeholder on the dealer's cash holding, so it can never learn that ContractId;
+-- each side must allocate its own leg. What makes that safe is that BOTH legs move
+-- inside the buyer's single @AllocatePaymentAndSettle@ exercise, so there is no moment
+-- at which one party has delivered and the other has not.
+module Tests.Settlement where
+
+import DA.Assert ((===))
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import DA.List (sortOn)
+import Daml.Script
+
+import TreasuryRfq.Holding (TokenHolding(..), Transfer(..))
+import TreasuryRfq.Settlement
+  ( AcceptedTrade(..)
+  , AllocateAsset(..)
+  , AllocatePaymentAndSettle(..)
+  , CancelAllocation(..)
+  , SettlementInstruction(..)
+  , SettlementReceipt(..)
+  )
+
+import Tests.Assertions
+import Tests.Fixtures
+
+-- | Total balance of @symbol@ visible to @owner@ and actually owned by it.
+balanceOf : Party -> Text -> Script Decimal
+balanceOf owner symbol = do
+  holdings <- query @TokenHolding owner
+  let mine = filter (\(_, h) -> h.owner == owner && h.symbol == symbol) holdings
+  pure (sum (map (\(_, h) -> h.amount) mine))
+
+assertBalance : Text -> Party -> Text -> Decimal -> Script ()
+assertBalance label owner symbol expected = do
+  actual <- balanceOf owner symbol
+  assertMsg
+    ( label <> ": " <> show owner <> " should hold " <> show expected <> " " <> symbol
+        <> " but holds " <> show actual
+    )
+    (actual == expected)
+
+-- | MODEL FINDING, pinned as a test: the buyer cannot settle without an explicit
+-- disclosure of the seller's allocated holding.
+--
+-- @AllocatePaymentAndSettle@ fetches and exercises Transfer on @assetHoldingCid@. The
+-- buyer is not a stakeholder on that holding (TokenHolding's stakeholders are the
+-- issuer and the owner), and Canton has no divulgence, so the ContractId stored on the
+-- instruction is not enough to make the contract readable to the buyer. AUTHORITY is
+-- present -- the seller signs the instruction -- but VISIBILITY is not, and the
+-- submission is rejected before the choice body runs.
+--
+-- Explicit disclosure is the supported fix and is what the frontend must implement: the
+-- dealer's settle call carries the treasury's disclosed holding. This script asserts
+-- both halves so nobody has to rediscover it from a raw ledger rejection.
+settlementRequiresDisclosureOfTheSellersLeg : Script ()
+settlementRequiresDisclosureOfTheSellersLeg = do
+  fx <- allocatedRfq
+  let p = fx.parties
+
+  -- Without the disclosure: rejected, even though every business precondition holds.
+  submitMustFail p.dealerB $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+
+  -- With it: settles.
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+  _ <- submit opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+  void $ assertOnly @SettlementReceipt "settled once disclosed" p.dealerB (\r -> r.rfqId == demoRfqId)
+
+-- | The headline DvP assertion: 10 cETH leaves the treasury, 30,400 USD leaves the
+-- winner, both in the same transaction, with correct change on both sides.
+settlementMovesBothLegs : Script ()
+settlementMovesBothLegs = do
+  fx <- allocatedRfq
+  let p = fx.parties
+
+  -- Before: nothing has moved. Allocation is a promise, not a transfer.
+  assertBalance "before settle" p.treasury demoAsset treasuryAssetBalance
+  assertBalance "before settle" p.treasury demoCurrency 0.0
+  assertBalance "before settle" p.dealerB demoCurrency dealerCashBalance
+  assertBalance "before settle" p.dealerB demoAsset 0.0
+
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+  _ <- submit opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+
+  -- After: both legs, and the change on each side.
+  assertBalance "after settle" p.treasury demoAsset (treasuryAssetBalance - demoQuantity)
+  assertBalance "after settle" p.treasury demoCurrency winningPayment
+  assertBalance "after settle" p.dealerB demoAsset demoQuantity
+  assertBalance "after settle" p.dealerB demoCurrency (dealerCashBalance - winningPayment)
+
+  -- The losing dealers' books are untouched.
+  forA_ (losingDealers p) $ \loser -> do
+    assertBalance "after settle" loser demoCurrency dealerCashBalance
+    assertBalance "after settle" loser demoAsset 0.0
+
+-- | Partial transfer arithmetic: the treasury keeps a 15 cETH change holding and the
+-- winner keeps 969,600 USD, each as a single new contract.
+settlementProducesCorrectChangeHoldings : Script ()
+settlementProducesCorrectChangeHoldings = do
+  fx <- settledRfq
+  let p = fx.parties
+
+  treasuryHoldings <- query @TokenHolding p.treasury
+  let treasuryOwned = sortOn (\(_, h) -> h.symbol) (filter (\(_, h) -> h.owner == p.treasury) treasuryHoldings)
+  map (\(_, h) -> (h.symbol, h.amount)) treasuryOwned
+    === [(demoCurrency, winningPayment), (demoAsset, 15.0)]  -- sorted by symbol: "USD" < "cETH"
+
+  dealerHoldings <- query @TokenHolding p.dealerB
+  let dealerOwned = sortOn (\(_, h) -> h.symbol) (filter (\(_, h) -> h.owner == p.dealerB) dealerHoldings)
+  map (\(_, h) -> (h.symbol, h.amount)) dealerOwned
+    === [(demoCurrency, dealerCashBalance - winningPayment), (demoAsset, demoQuantity)]
+
+-- | An exact-amount payment produces no change holding at all.
+settlementWithExactPaymentLeavesNoChange : Script ()
+settlementWithExactPaymentLeavesNoChange = do
+  fx <- allocatedRfq
+  let p = fx.parties
+  exact <- mintHolding p.registry p.dealerB demoCurrency winningPayment
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+  _ <- submit opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = exact
+  -- Dealer B still has its original 1,000,000 USD plus 10 cETH; the exact holding was
+  -- consumed whole with no remainder.
+  assertBalance "exact payment" p.dealerB demoCurrency dealerCashBalance
+  assertBalance "exact payment" p.dealerB demoAsset demoQuantity
+  assertBalance "exact payment" p.treasury demoCurrency winningPayment
+
+-- | ATOMICITY. A settlement that fails on the cash leg moves NOTHING -- in particular
+-- the asset leg does not move, even though the asset transfer is sequenced first inside
+-- the choice body.
+--
+-- This is the property that makes the two-step design safe: the buyer cannot take
+-- delivery and then have the payment bounce, because both transfers live in one
+-- transaction and a rejected transaction has no effect at all.
+settlementIsAtomicOnFailure : Script ()
+settlementIsAtomicOnFailure = do
+  fx <- allocatedRfq
+  let p = fx.parties
+
+  -- Spend down Dealer B's cash so the allocated holding can no longer cover the trade
+  -- -- 1,000,000 USD becomes 1,000 USD against a 30,400 USD obligation.
+  (_toDealerC, change) <- submit p.dealerB $
+    exerciseCmd fx.cashB Transfer with
+      newOwner = p.dealerC
+      transferAmount = dealerCashBalance - 1000.0
+  let underfunded = case change of
+        Some c -> c
+        None -> error "expected change from a partial transfer"
+
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+  submitMustFail opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = underfunded
+
+  -- The asset leg never moved: the treasury still has all 25 cETH and Dealer B has none.
+  assertBalance "after failed settle" p.treasury demoAsset treasuryAssetBalance
+  assertBalance "after failed settle" p.dealerB demoAsset 0.0
+  assertBalance "after failed settle" p.treasury demoCurrency 0.0
+
+  -- And the instruction is still outstanding, so the trade can still be settled.
+  void $ assertOnly @SettlementInstruction "instruction survives a failed settle" p.treasury
+    (\i -> i.rfqId == demoRfqId)
+  assertBlind @SettlementReceipt "no receipt from a failed settle" p.treasury
+
+-- | KNOWN LIMITATION, exercised: the allocated asset is pinned, not escrowed.
+--
+-- The mock TokenHolding has no lock primitive, so the seller can still spend the
+-- holding it allocated. When it does, the buyer's settlement fails on the archived
+-- ContractId. Nothing is lost and no partial settlement is possible, but the seller
+-- does hold an option to walk away between the two steps -- which is why the real
+-- integration replaces the pin with a CIP-56 registry lock. Documented in
+-- TreasuryRfq.Settlement; asserted here so the behaviour is not a surprise.
+settlementPinnedAssetCanBeSpentBySeller : Script ()
+settlementPinnedAssetCanBeSpentBySeller = do
+  fx <- allocatedRfq
+  let p = fx.parties
+  -- The buyer holds a valid disclosure of the allocated holding...
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+  -- ...and the treasury then spends the very holding it allocated.
+  _ <- submit p.treasury $
+    exerciseCmd fx.treasuryAsset Transfer with newOwner = p.dealerC, transferAmount = 25.0
+  submitMustFail opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+  -- The buyer's cash is untouched by the failure.
+  assertBalance "after a broken pin" p.dealerB demoCurrency dealerCashBalance
+
+-- | CancelAllocation un-does step one: the instruction is archived, the AcceptedTrade
+-- comes back, no tokens have moved, and the trade can be re-allocated against a
+-- different holding and settled.
+settlementCancelAllocationRoundTrip : Script ()
+settlementCancelAllocationRoundTrip = do
+  fx <- allocatedRfq
+  let p = fx.parties
+
+  -- Only the seller may un-allocate.
+  submitMustFail p.dealerB $ exerciseCmd fx.instructionCid CancelAllocation
+  submitMustFail p.dealerA $ exerciseCmd fx.instructionCid CancelAllocation
+
+  tradeAgain <- submit p.treasury $ exerciseCmd fx.instructionCid CancelAllocation
+
+  assertBlind @SettlementInstruction "the instruction is gone" p.treasury
+  assertBlind @SettlementInstruction "and the buyer no longer sees one either" p.dealerB
+  (_, trade) <- assertOnly @AcceptedTrade "the trade is back on the table" p.treasury
+    (\t -> t.rfqId == demoRfqId)
+  trade.price === priceDealerB
+  trade.dealer === p.dealerB
+  assertBalance "cancelling moves nothing" p.treasury demoAsset treasuryAssetBalance
+  assertBalance "cancelling moves nothing" p.dealerB demoCurrency dealerCashBalance
+
+  -- Re-allocate against a different holding and settle for real.
+  fresh <- mintHolding p.registry p.treasury demoAsset demoQuantity
+  instruction2 <- submit p.treasury $ exerciseCmd tradeAgain AllocateAsset with
+    assetHoldingCid = fresh
+    auditor = Some p.auditor
+  opts <- buyerSettlementOptions p.dealerB p.treasury fresh
+  _ <- submit opts $
+    exerciseCmd instruction2 AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+
+  -- The original 25 cETH holding was never touched; the fresh 10 went to the buyer.
+  assertBalance "after re-allocation" p.treasury demoAsset treasuryAssetBalance
+  assertBalance "after re-allocation" p.dealerB demoAsset demoQuantity
+  assertBalance "after re-allocation" p.treasury demoCurrency winningPayment
+  void $ assertOnly @SettlementReceipt "receipt issued after re-allocation" p.auditor
+    (\r -> r.paymentAmount == winningPayment)
+
+-- | The receipt's arithmetic ties back to the auction: paymentAmount is exactly
+-- quantity * winning price, and the template's own @ensure@ re-checks it.
+settlementReceiptArithmetic : Script ()
+settlementReceiptArithmetic = do
+  fx <- settledRfq
+  let p = fx.parties
+  (_, receipt) <- assertOnly @SettlementReceipt "receipt" p.treasury (\r -> r.rfqId == demoRfqId)
+  receipt.paymentAmount === receipt.assetQuantity * receipt.price
+  receipt.paymentAmount === winningPayment
+  receipt.assetQuantity === demoQuantity
+  receipt.price === priceDealerB
+  receipt.buyer === p.dealerB
+  receipt.seller === p.treasury
