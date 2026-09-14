@@ -110,6 +110,18 @@ template Quote
         fillCid : ContractId RfqFill
       controller treasury
       do
+        -- 'expiry', and deliberately NOT 'quoteDeadline'. The two bound different
+        -- things: the deadline closes the BIDDING window (no new quote, no revision --
+        -- 'Tests.Authorization.authNoQuotingAfterTheDeadline'), while 'expiry' is the
+        -- dealer's own statement of how long its price stands. Asserting the deadline
+        -- here would make the treasury's acceptance window a side effect of the dealer
+        -- submission cut-off, and would void bids that were submitted in good time.
+        --
+        -- A dealer that wants its price to lapse with the auction says so, by passing
+        -- 'expiry = Some deadline' -- which is what the desk UI sends by default
+        -- (frontend/components/desks/DealerDesk.tsx). 'None' means what it says: no
+        -- expiry. A dealer can also pull the price at any time with 'Withdraw'.
+        -- Enforced by 'Tests.Authorization.authExpiredQuoteCannotBeAccepted'.
         assertNotPast "the quote expiry" expiry
         fill <- fetch fillCid
         assertMsg "the fill right belongs to a different RFQ" (fill.rfqId == rfqId)

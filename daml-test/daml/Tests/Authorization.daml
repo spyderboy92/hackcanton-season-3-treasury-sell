@@ -31,12 +31,21 @@ authDealerCannotAcceptItsOwnQuote : Script ()
 authDealerCannotAcceptItsOwnQuote = do
   fx <- quotedRfq
   let p = fx.parties
-  submitMustFail p.dealerB $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  -- 'expectAuthorizationError', not 'submitMustFail': the claim here is about the
+  -- CONTROLLER, and submitMustFail would keep this green if Accept's controller broke
+  -- while some precondition happened to reject the submission anyway.
+  expectAuthorizationError "a dealer accepting its own quote" p.dealerB $
+    exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
   -- Nor can a dealer accept a competitor's quote (it cannot even name the cids in
   -- practice -- RfqFill has no observers at all; here we hand it both explicitly and the
   -- ledger still refuses).
-  submitMustFail p.dealerA $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
-  submitMustFail p.auditor $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  -- A competitor and the auditor are refused EARLIER than that: they are not
+  -- stakeholders of B's quote, so they cannot address it at all. Asserted as the
+  -- disclosure failure it actually is rather than lumped in with the controller check.
+  expectNotVisible "a dealer accepting a competitor's quote" p.dealerA $
+    exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
+  expectNotVisible "the auditor accepting a quote" p.auditor $
+    exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
   -- ...and the treasury can.
   _ <- submit p.treasury $ exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid
   pure ()
@@ -61,10 +70,10 @@ authDealerCannotCreateQuoteDirectly = do
         quoteDeadline = fx.quoteDeadline
         expiry = None
         submittedAt = now
-  submitMustFail p.dealerA $ createCmd forged
+  expectAuthorizationError "a dealer forging a Quote" p.dealerA $ createCmd forged
   -- The treasury cannot forge one on the dealer's behalf either: both signatures are
   -- required, and that is what makes a Quote binding.
-  submitMustFail p.treasury $ createCmd forged
+  expectAuthorizationError "the treasury forging a Quote" p.treasury $ createCmd forged
   assertBlind @Quote "no forged quote reached the ledger" p.treasury
 
 -- | A dealer cannot end the auction. Close and Cancel are controlled by the treasury
@@ -73,10 +82,12 @@ authDealerCannotCloseOrCancelTheRfq : Script ()
 authDealerCannotCloseOrCancelTheRfq = do
   fx <- openRfq
   let p = fx.parties
-  submitMustFail p.dealerA $ exerciseCmd fx.rfqCid Close
-  submitMustFail p.dealerA $ exerciseCmd fx.rfqCid Cancel
-  submitMustFail p.dealerC $ exerciseCmd fx.rfqCid Close
-  submitMustFail p.stranger $ exerciseCmd fx.rfqCid Close
+  expectAuthorizationError "a dealer closing the RFQ" p.dealerA $ exerciseCmd fx.rfqCid Close
+  expectAuthorizationError "a dealer cancelling the RFQ" p.dealerA $ exerciseCmd fx.rfqCid Cancel
+  expectAuthorizationError "another dealer closing the RFQ" p.dealerC $ exerciseCmd fx.rfqCid Close
+  -- The invited dealers observe the RFQ, so for them it is genuinely the controller that
+  -- refuses. An uninvited stranger never sees the contract in the first place.
+  expectNotVisible "a stranger closing the RFQ" p.stranger $ exerciseCmd fx.rfqCid Close
   -- The RFQ is untouched and still Open.
   (_, rfq) <- assertOnly @RFQ "RFQ survived the attempts" p.treasury (\r -> r.rfqId == demoRfqId)
   rfq.status === Open
@@ -94,10 +105,19 @@ authOnlyTheInvitedDealerMayQuote : Script ()
 authOnlyTheInvitedDealerMayQuote = do
   fx <- openRfq
   let p = fx.parties
-  submitMustFail p.dealerB $ exerciseCmd fx.invitationA SubmitQuote with price = 3000.0, expiry = None
-  submitMustFail p.treasury $ exerciseCmd fx.invitationA SubmitQuote with price = 3000.0, expiry = None
-  submitMustFail p.dealerB $ exerciseCmd fx.invitationA Decline
-  -- Prices must be positive.
+  -- Controller claims: matched on the authorization error.
+  -- An uninvited dealer cannot even see A's invitation -- bilateral, by construction --
+  -- so it is refused on disclosure, before any controller check.
+  expectNotVisible "another dealer quoting on A's invitation" p.dealerB $
+    exerciseCmd fx.invitationA SubmitQuote with price = 3000.0, expiry = None
+  expectNotVisible "another dealer declining A's invitation" p.dealerB $
+    exerciseCmd fx.invitationA Decline
+  -- The treasury DOES see it -- it signed it -- so here the controller check is the
+  -- thing doing the work, and that is what is matched.
+  expectAuthorizationError "the treasury quoting on A's invitation" p.treasury $
+    exerciseCmd fx.invitationA SubmitQuote with price = 3000.0, expiry = None
+  -- Validation claims: any rejection is the right assertion, so submitMustFail says it
+  -- more plainly. The dealer here IS the controller; it is the price that is refused.
   submitMustFail p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with price = 0.0, expiry = None
   submitMustFail p.dealerA $ exerciseCmd fx.invitationA SubmitQuote with price = -1.0, expiry = None
 
@@ -106,9 +126,13 @@ authOnlyTheQuotingDealerMayReviseOrWithdraw : Script ()
 authOnlyTheQuotingDealerMayReviseOrWithdraw = do
   fx <- quotedRfq
   let p = fx.parties
-  submitMustFail p.treasury $ exerciseCmd fx.quoteA Revise with newPrice = 1.0
-  submitMustFail p.dealerB $ exerciseCmd fx.quoteA Revise with newPrice = 1.0
-  submitMustFail p.treasury $ exerciseCmd fx.quoteA Withdraw
+  expectAuthorizationError "the treasury revising a dealer's quote" p.treasury $
+    exerciseCmd fx.quoteA Revise with newPrice = 1.0
+  expectNotVisible "another dealer revising A's quote" p.dealerB $
+    exerciseCmd fx.quoteA Revise with newPrice = 1.0
+  expectAuthorizationError "the treasury withdrawing a dealer's quote" p.treasury $
+    exerciseCmd fx.quoteA Withdraw
+  -- A validation claim, not a controller one: dealerA may revise, but not to zero.
   submitMustFail p.dealerA $ exerciseCmd fx.quoteA Revise with newPrice = 0.0
 
 -- ---------------------------------------------------------------------------
@@ -430,7 +454,8 @@ authFillRightIsTreasuryOnly = do
   let p = fx.parties
   -- A dealer cannot mint a fill right in the treasury's name: the treasury is the sole
   -- signatory.
-  submitMustFail p.dealerB $ createCmd RfqFill with rfqId = demoRfqId, treasury = p.treasury
+  expectAuthorizationError "a dealer minting the treasury's fill right" p.dealerB $
+    createCmd RfqFill with rfqId = demoRfqId, treasury = p.treasury
 
   -- Minting one naming ITSELF as treasury is legal but worthless. It is signed by the
   -- dealer alone, so the treasury is not a stakeholder and cannot even name it in a
@@ -443,5 +468,8 @@ authFillRightIsTreasuryOnly = do
 
   -- And no dealer can destroy the treasury's fill right to stall the auction: RfqFill
   -- has no observers, so a dealer cannot address it at all.
-  submitMustFail p.dealerB $ archiveCmd fx.fillCid
+  -- RfqFill has no observers at all, so this is a disclosure refusal, not a controller
+  -- one -- which is the stronger of the two and the one this template is built for.
+  expectNotVisible "a dealer archiving the treasury's fill right" p.dealerB $
+    archiveCmd fx.fillCid
   void $ assertVisible @RfqFill "the treasury's fill right is untouched" p.treasury 1

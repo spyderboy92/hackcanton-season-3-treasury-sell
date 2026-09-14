@@ -37,8 +37,10 @@
 --                   claimed: 'authKnownLimitationTreasuryCanMintASecondFillRight'.
 --
 -- [Tests.Settlement] DvP balances before and after, atomicity under a failed cash leg,
---                   exact-payment and change arithmetic, and the CancelAllocation
---                   round trip.
+--                   exact-payment and change arithmetic, the CancelAllocation round
+--                   trip, and 'settlementBuySideReversesBothLegs' -- the one script that
+--                   runs @side = Buy@, so the 'tradeParties' Buy branch is evaluated
+--                   rather than assumed.
 --
 -- [Demo.Bootstrap]  NOT a test. Seeds a live sandbox with the same scenario, stopping
 --                   before any quote is submitted so the demo can be driven from the UI.
@@ -127,4 +129,5 @@ fullSuite = do
   settlementIsAtomicOnFailure
   settlementPinnedAssetCanBeSpentBySeller
   settlementCancelAllocationRoundTrip
+  settlementBuySideReversesBothLegs
   settlementReceiptArithmetic

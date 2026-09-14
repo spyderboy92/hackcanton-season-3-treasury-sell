@@ -29,7 +29,7 @@ signatories and observers, enforced by the participant.
 | Path | Contents |
 | --- | --- |
 | `daml/` | The contract model package (`treasury-rfq`, version `0.0.1`). `daml/daml.yaml` pins SDK 3.5.1, deps `daml-prim` + `daml-stdlib` only. |
-| `daml/daml/TreasuryRfq/*.daml` | 5 modules, 575 lines, 8 templates, 11 business choices. **The comments are load-bearing** — they record why each shape was chosen and what breaks if it changes. |
+| `daml/daml/TreasuryRfq/*.daml` | 5 modules, 587 lines, 8 templates, 11 business choices. **The comments are load-bearing** — they record why each shape was chosen and what breaks if it changes. |
 | `daml-test/` | The test package (`treasury-rfq-tests`), `data-dependencies` on the built DAR of `daml/`. Depends on `daml-script`. |
 | `daml-test/daml/Tests.daml` | Suite index and map, plus two aggregate entry points (`privacySuite`, `fullSuite`) for running against a real ledger. |
 | `daml-test/daml/Tests/*.daml` | `Fixtures`, `Assertions`, `Lifecycle`, `Privacy`, `Authorization`, `Settlement`. |
@@ -116,7 +116,7 @@ scenario, and serves the UI.
 | `docker compose logs -f` | follow logs |
 | `docker compose down` | stop; ledger state survives in the volume |
 | `docker compose down -v` | stop and **wipe ledger state** (fresh party ids on the next `up`) |
-| `docker compose run --rm tests` | run the 58-script Daml test suite |
+| `docker compose run --rm tests` | run the 59-script Daml test suite |
 
 The toolchain image installs `dpm` and then explicitly `dpm install 3.5.1`
 because the installer pulls the latest SDK — see the trap below; the same trap
@@ -131,7 +131,7 @@ curl https://get.digitalasset.com/install/install.sh | sh
 export PATH="$HOME/.dpm/bin:$PATH"      # trap 1 — the installer does NOT do this
 dpm install 3.5.1                       # trap 2 — installer pulls latest; repo pins 3.5.1
 dpm build --all                         # builds both packages via multi-package.yaml
-dpm test --package-root daml-test       # 58 scripts
+dpm test --package-root daml-test       # 59 scripts
 ```
 
 Then, in two terminals:
@@ -576,7 +576,7 @@ trade and never a competing quote.
 ### Running it
 
 ```bash
-dpm test --package-root daml-test                    # all 58 scripts
+dpm test --package-root daml-test                    # all 59 scripts
 dpm test --package-root daml-test --all --show-coverage
 ```
 
@@ -598,7 +598,7 @@ dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
 
 ### Organisation
 
-58 zero-argument `Script`s are discovered by the runner: 49 named assertions,
+59 zero-argument `Script`s are discovered by the runner: 50 named assertions,
 6 fixture stages, 2 aggregates, and `Demo.Bootstrap:bootstrap`.
 
 | Module | Scripts | Contents |
@@ -609,7 +609,7 @@ dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
 | `Tests.Lifecycle` | 13 | The happy path works. |
 | `Tests.Privacy` | 10 | **The centrepiece.** What each party cannot see, at every stage. |
 | `Tests.Authorization` | 18 | What each party cannot do — mostly `submitMustFail`; `authKnownLimitationTreasuryCanMintASecondFillRight` is the one that asserts what it still *can*. |
-| `Tests.Settlement` | 8 | DvP balances, atomicity under a failed leg, change arithmetic, `CancelAllocation` round trip. |
+| `Tests.Settlement` | 9 | DvP balances, atomicity under a failed leg, change arithmetic, `CancelAllocation` round trip. |
 | `Demo.Bootstrap` | 1 | Not a test. Seeds a live sandbox. |
 
 Stages return **named records**, never positional tuples, and the records are
@@ -896,6 +896,7 @@ Stated, not hidden. Each is deliberately unfixed for a recorded reason.
 | --- | --- |
 | **The allocated asset is pinned by `ContractId`, not escrowed.** `SettlementInstruction.assetHoldingCid` points at a holding that stays under the seller's control, so the seller can `Transfer` or split it between the two DvP steps. | This mock `TokenHolding` has no lock primitive. If the seller does spend it, `AllocatePaymentAndSettle` fails when it fetches the archived id — a contract-not-found rejection, not a clean assert — and the whole transaction aborts: nothing is lost and no partial settlement is possible. The seller does hold an option to walk away between the two steps. In a real deployment the pin is replaced by a **CIP-56 registry lock**, which the registry owns; building a lock or an escrow party into the mock would misrepresent where that responsibility lives. Pinned by `Tests.Settlement.settlementPinnedAssetCanBeSpentBySeller`. |
 | **`RfqFill` bounds reuse, not minting.** The treasury is its only signatory, so it can create a second fill right for the same `rfqId` and bind two dealers to the same quantity. | No ledger-level fix is available. Contract keys need LF 2.3 and this package targets 2.2 — and raising the target does not help: **Canton 3.5.1 does not enforce key uniqueness**, verified directly against a 3.5.1 sandbox where two contracts sharing `key (treasury, rfqId)` were both accepted. A key would read as a guarantee while enforcing nothing, which is worse than the stated gap. Enforcement would need a signatory the treasury does not control — a registry or notary party — which is a topology change, not a model change. The exposure is self-inflicted and invisible to dealers (`RfqFill` has no observers), so no dealer can detect it in advance. Exercised by `Tests.Authorization.authKnownLimitationTreasuryCanMintASecondFillRight`. |
+| **The Ledger API is served unauthenticated, and the acting party is whatever the caller names.** No JWT is validated on `/api/ledger/*` or by the participant. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the ports can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. So the stack is now bound to **loopback only** — `docker-compose.yml` publishes `127.0.0.1:6864`, `127.0.0.1:6865` and `127.0.0.1:3000`. **Do not publish these on `0.0.0.0` or expose them through a tunnel.** A real deployment validates a JWT at the participant and derives `asParty` from the token rather than the request body; the route handlers are the single place that change lands. |
 | **`TokenHolding` is a mock, not a real CIP-56 asset.** | Live CIP-56 integration is P2. The module is isolated precisely so the swap is local: an adapter replaces `Transfer` and `Settlement`/`Quoting`/`Rfq` are untouched, because all they know about an asset is that it has an owner, a symbol, an amount and a `Transfer` choice. cETH and CBTC are both CIP-56 and differ by registry, not by workflow. |
 | **Settlement requires explicit disclosure of the seller's holding.** | Not a bug — it is Canton behaving correctly (no divulgence). It is listed because it is a **real integration requirement**: any client of this model must implement the seller→buyer handoff of the disclosed contract. See invariant 4. |
 

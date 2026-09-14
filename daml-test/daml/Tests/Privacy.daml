@@ -24,8 +24,8 @@ import DA.Functor (void)
 import Daml.Script
 
 import TreasuryRfq.Holding (TokenHolding(..))
-import TreasuryRfq.Quoting (Quote(..), RfqInvitation(..))
-import TreasuryRfq.Rfq (RFQ(..), RfqFill(..))
+import TreasuryRfq.Quoting (Accept(..), Quote(..), RfqInvitation(..), SubmitQuote(..))
+import TreasuryRfq.Rfq (Close(..), RFQ(..), RfqFill(..))
 import TreasuryRfq.Settlement (AcceptedTrade(..), SettlementInstruction(..), SettlementReceipt(..))
 import TreasuryRfq.Types (RfqStatus(..))
 
@@ -92,36 +92,51 @@ privacyQuotesAreInvisibleToCompetitors = do
 -- should be reverted.
 privacyFillRightIsInvisibleToDealers : Script ()
 privacyFillRightIsInvisibleToDealers = do
+  -- ONE ledger, one party set, three points in ITS OWN timeline. An earlier version of
+  -- this script called openRfq, quotedRfq and acceptedRfq in turn; each of those
+  -- allocates a fresh party set and builds an independent chain, so it asserted against
+  -- three unrelated ledgers while the prose claimed continuity. The assertions held, but
+  -- they did not demonstrate what they said. The stages are threaded by hand here so
+  -- "still invisible" and "and gone" refer to the same fill right throughout.
   fx <- openRfq
   let p = fx.parties
       outsiders = [p.dealerA, p.dealerB, p.dealerC, p.auditor, p.registry, p.stranger]
 
   -- Created alongside the RFQ and the invitations; only the treasury has it.
-  void $ assertOnly @RfqFill "the treasury holds its own fill right" p.treasury
+  (fillCid, fill) <- assertOnly @RfqFill "the treasury holds its own fill right" p.treasury
     (\f -> f.rfqId == demoRfqId && f.treasury == p.treasury)
   assertAllBlind @RfqFill "the fill right must not be disclosed when the RFQ opens" outsiders
 
-  -- Still invisible once the dealers have quoted.
-  quoted <- quotedRfq
-  let q = quoted.parties
-  void $ assertVisible @RfqFill "still exactly one, still the treasury's" q.treasury 1
-  assertAllBlind @RfqFill "the fill right must not be disclosed during the auction"
-    [q.dealerA, q.dealerB, q.dealerC, q.auditor, q.registry, q.stranger]
+  -- Still invisible once THESE dealers have quoted against THIS RFQ.
+  _ <- submit p.dealerA $
+    exerciseCmd fx.invitationA SubmitQuote with price = priceDealerA, expiry = None
+  quoteB <- submit p.dealerB $
+    exerciseCmd fx.invitationB SubmitQuote with price = priceDealerB, expiry = None
+  _ <- submit p.dealerC $
+    exerciseCmd fx.invitationC SubmitQuote with price = priceDealerC, expiry = None
+  (stillThere, _) <- assertOnly @RfqFill "still exactly one, still the treasury's" p.treasury
+    (\f -> f.rfqId == demoRfqId)
+  stillThere === fillCid
+  fill.treasury === p.treasury
+  assertAllBlind @RfqFill "the fill right must not be disclosed during the auction" outsiders
 
-  -- And gone -- for everyone -- once it has been spent by Accept.
-  accepted <- acceptedRfq
-  let a = accepted.parties
-  assertBlind @RfqFill "the fill right is consumed by Accept" a.treasury
-  assertAllBlind @RfqFill "no dealer ever sees a fill right, spent or unspent"
-    [a.dealerA, a.dealerB, a.dealerC, a.auditor, a.registry, a.stranger]
+  -- And gone -- for everyone -- once THAT right has been spent by Accept. Accept and
+  -- Close as siblings, the submission shape the whole model is built around.
+  _ <- submit p.treasury $
+    liftA2 (,) (exerciseCmd quoteB Accept with fillCid) (exerciseCmd fx.rfqCid Close)
+  assertBlind @RfqFill "the fill right is consumed by Accept" p.treasury
+  assertAllBlind @RfqFill "no dealer ever sees a fill right, spent or unspent" outsiders
 
   -- The losing dealers' end-state ACS is unchanged by the fix: still just the closed
   -- RFQ and their own quote (plus their own cash, asserted in privacyLosingDealerFinalAcs).
-  forA_ (losingDealers a) $ \loser -> do
+  forA_ [p.dealerA, p.dealerC] $ \loser -> do
     (_, rfq) <- assertOnly @RFQ "a loser still sees only the closed RFQ" loser
       (\r -> r.rfqId == demoRfqId)
     rfq.status === Closed
     void $ assertOnly @Quote "a loser still sees only its own quote" loser (\qt -> qt.dealer == loser)
+  -- The winner's quote is gone, consumed by the accept it co-signed -- so no party on
+  -- this ledger holds a live Quote for this rfqId any more.
+  assertBlind @Quote "the winner's quote was consumed by the accept" p.dealerB
 
 -- ---------------------------------------------------------------------------
 -- The moment of truth: accept + close as siblings

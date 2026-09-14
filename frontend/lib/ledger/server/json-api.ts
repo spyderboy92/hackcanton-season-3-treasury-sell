@@ -171,8 +171,16 @@ function codeFor(error: CantonError): LedgerErrorCode {
   if (/CONTRACT_NOT_ACTIVE|INACTIVE_CONTRACTS|Contract could not be found with id|LOCAL_VERDICT_LOCKED_CONTRACTS/i.test(code + cause)) {
     return 'CONTRACT_NOT_ACTIVE';
   }
-  if (/DAML_AUTHORIZATION_ERROR|requires authorizers|missing authorization|PERMISSION_DENIED|NO_SYNCHRONIZER_FOR_SUBMISSION/i.test(code + cause)) {
+  if (/DAML_AUTHORIZATION_ERROR|requires authorizers|missing authorization|PERMISSION_DENIED/i.test(code + cause)) {
     return 'NOT_AUTHORIZED';
+  }
+  // NOT an authorization failure, despite reading like one. The participant could not
+  // route the submission to a synchronizer — a connectivity or topology fault, nothing
+  // to do with who the submitter is. Grouped with the authorization errors it sent
+  // operators to check permissions while the participant's synchronizer connection was
+  // the actual fault, so it gets the unavailability code it deserves.
+  if (/NO_SYNCHRONIZER_FOR_SUBMISSION|SYNCHRONIZER_NOT_CONNECTED|NOT_CONNECTED_TO_ANY_SYNCHRONIZER/i.test(code + cause)) {
+    return 'UNAVAILABLE';
   }
   if (/CONTRACT_NOT_FOUND|TEMPLATE_NOT_FOUND|PARTY_NOT_KNOWN|NOT_FOUND/i.test(code)) return 'NOT_FOUND';
   if (/UNHANDLED_EXCEPTION|DAML_FAILURE|INTERPRETATION_.*FAILED|PRECONDITION|ABORTED|FAILED_PRECONDITION/i.test(code)) {

@@ -11,14 +11,15 @@ import { NextResponse } from 'next/server';
 
 import { readDesk } from '@/lib/ledger/server/ledger';
 import { errorResponse, readJson } from '@/lib/ledger/server/http';
-import type { QueryRequest, QueryResponse } from '@/lib/ledger/wire';
+import { parseQueryRequest } from '@/lib/ledger/server/validate';
+import type { QueryResponse } from '@/lib/ledger/wire';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const body = await readJson<QueryRequest>(request);
-    return NextResponse.json<QueryResponse>(await readDesk(body));
+    const query = parseQueryRequest(await readJson<unknown>(request));
+    return NextResponse.json<QueryResponse>(await readDesk(query));
   } catch (cause) {
     return errorResponse(cause);
   }

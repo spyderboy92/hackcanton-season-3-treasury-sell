@@ -10,14 +10,17 @@ import { NextResponse } from 'next/server';
 
 import { runCommand } from '@/lib/ledger/server/ledger';
 import { errorResponse, readJson } from '@/lib/ledger/server/http';
-import type { CommandRequest, CommandResponse } from '@/lib/ledger/wire';
+import { parseCommandRequest } from '@/lib/ledger/server/validate';
+import type { CommandResponse } from '@/lib/ledger/wire';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   try {
-    const body = await readJson<CommandRequest>(request);
-    return NextResponse.json<CommandResponse>(await runCommand(body));
+    // Validated, not cast: an unknown `kind` or a missing field is a 400 naming it,
+    // rather than a TypeError deeper in that surfaces as "the ledger is unavailable".
+    const command = parseCommandRequest(await readJson<unknown>(request));
+    return NextResponse.json<CommandResponse>(await runCommand(command));
   } catch (cause) {
     return errorResponse(cause);
   }

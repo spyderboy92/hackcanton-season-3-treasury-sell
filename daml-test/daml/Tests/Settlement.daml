@@ -14,7 +14,12 @@ import DA.Functor (void)
 import DA.List (sortOn)
 import Daml.Script
 
+import DA.Time (addRelTime, hours)
+
 import TreasuryRfq.Holding (TokenHolding(..), Transfer(..))
+import TreasuryRfq.Quoting (Accept(..), RfqInvitation(..), SubmitQuote(..))
+import TreasuryRfq.Rfq (Close(..), RFQ(..), RfqFill(..))
+import TreasuryRfq.Types (RfqStatus(..), Side(..))
 import TreasuryRfq.Settlement
   ( AcceptedTrade(..)
   , AllocateAsset(..)
@@ -241,3 +246,103 @@ settlementReceiptArithmetic = do
   receipt.price === priceDealerB
   receipt.buyer === p.dealerB
   receipt.seller === p.treasury
+
+-- ---------------------------------------------------------------------------
+-- The other side of the book
+-- ---------------------------------------------------------------------------
+
+-- | The whole lifecycle with @side = Buy@, where the treasury is the BUYER.
+--
+-- Every other script in this suite fixes @side = Sell@, so until this one existed the
+-- @Buy@ branch of 'TreasuryRfq.Types.tradeParties' -- and therefore 'buyerOf' and
+-- 'sellerOf', and the controllers of all three settlement choices, which are defined in
+-- terms of them -- was never evaluated. A reversed buyer and seller there would have
+-- shipped with the suite green, because Daml's coverage metric counts templates created
+-- and choices exercised, not the data branches inside them.
+--
+-- What this pins, concretely: on Buy the DEALER delivers the asset and controls
+-- 'AllocateAsset', and the TREASURY pays and controls 'AllocatePaymentAndSettle' -- the
+-- exact opposite of every other script here. Both are asserted by who is able to submit,
+-- and by which balance moves which way.
+settlementBuySideReversesBothLegs : Script ()
+settlementBuySideReversesBothLegs = do
+  p <- allocateDemoParties
+
+  -- The treasury is buying cETH, so it is the one holding cash and the dealer is the one
+  -- holding the asset. Mirror image of the Sell fixture's opening balances.
+  treasuryCash <- mintHolding p.registry p.treasury demoCurrency dealerCashBalance
+  dealerAsset <- mintHolding p.registry p.dealerB demoAsset treasuryAssetBalance
+
+  now <- getTime
+  let quoteDeadline = Some (addRelTime now (hours 1))
+      buyTerms = RfqInvitation with
+        rfqId = demoRfqId
+        treasury = p.treasury
+        dealer = p.dealerB
+        asset = demoAsset
+        quoteCurrency = demoCurrency
+        side = Buy
+        quantity = demoQuantity
+        quoteDeadline
+
+  (rfqCid, fillCid, invitationB) <- submit p.treasury $
+    (,,)
+      <$> createCmd RFQ with
+            rfqId = demoRfqId
+            treasury = p.treasury
+            asset = demoAsset
+            quoteCurrency = demoCurrency
+            side = Buy
+            quantity = demoQuantity
+            quoteDeadline
+            invitedDealers = [p.dealerB]
+            status = Open
+      <*> createCmd RfqFill with rfqId = demoRfqId, treasury = p.treasury
+      <*> createCmd buyTerms
+
+  quoteB <- submit p.dealerB $
+    exerciseCmd invitationB SubmitQuote with price = priceDealerB, expiry = None
+  (tradeCid, _) <- submit p.treasury $
+    liftA2 (,) (exerciseCmd quoteB Accept with fillCid) (exerciseCmd rfqCid Close)
+
+  -- STEP 1. On Buy the seller is the DEALER, so the treasury cannot allocate the asset
+  -- leg -- on Sell it is the only party that can. Matched on the authorization error so
+  -- a broken 'sellerOf' cannot hide behind some other rejection.
+  expectAuthorizationError "the treasury allocating the asset leg on a Buy" p.treasury $
+    exerciseCmd tradeCid AllocateAsset with
+      assetHoldingCid = dealerAsset
+      auditor = Some p.auditor
+  instructionCid <- submit p.dealerB $
+    exerciseCmd tradeCid AllocateAsset with
+      assetHoldingCid = dealerAsset
+      auditor = Some p.auditor
+
+  -- STEP 2. And the buyer is the TREASURY, so the dealer cannot settle.
+  expectAuthorizationError "the dealer settling the cash leg on a Buy" p.dealerB $
+    exerciseCmd instructionCid AllocatePaymentAndSettle with paymentHoldingCid = treasuryCash
+
+  -- Before: nothing has moved.
+  assertBalance "before settle" p.treasury demoCurrency dealerCashBalance
+  assertBalance "before settle" p.treasury demoAsset 0.0
+  assertBalance "before settle" p.dealerB demoAsset treasuryAssetBalance
+  assertBalance "before settle" p.dealerB demoCurrency 0.0
+
+  -- The disclosure handoff runs the other way too: the SELLER is the dealer here.
+  opts <- buyerSettlementOptions p.treasury p.dealerB dealerAsset
+  _ <- submit opts $
+    exerciseCmd instructionCid AllocatePaymentAndSettle with paymentHoldingCid = treasuryCash
+
+  -- After: the asset arrived at the treasury and the cash left it -- the mirror of
+  -- 'settlementMovesBothLegs', which asserts the same numbers in the other direction.
+  let payment = demoQuantity * priceDealerB
+  assertBalance "after settle" p.treasury demoAsset demoQuantity
+  assertBalance "after settle" p.treasury demoCurrency (dealerCashBalance - payment)
+  assertBalance "after settle" p.dealerB demoAsset (treasuryAssetBalance - demoQuantity)
+  assertBalance "after settle" p.dealerB demoCurrency payment
+
+  -- And the receipt names the reversed roles, which is the thing 'tradeParties' decides.
+  (_, receipt) <- assertOnly @SettlementReceipt "a Buy receipt" p.treasury
+    (\r -> r.rfqId == demoRfqId)
+  receipt.buyer === p.treasury
+  receipt.seller === p.dealerB
+  receipt.paymentAmount === payment

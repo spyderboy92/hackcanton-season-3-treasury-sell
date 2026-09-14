@@ -62,7 +62,6 @@ export type CommandRequest =
   | {
       kind: 'createRfq';
       asParty: Party;
-      rfqId?: string;
       asset: string;
       quoteCurrency: string;
       side: Side;

@@ -75,7 +75,8 @@ export async function runCommand(request: CommandRequest): Promise<CommandRespon
       if (request.invitedDealers.length === 0) {
         throw new LedgerError('INVALID_ARGUMENT', 'Invite at least one dealer.');
       }
-      const rfqId = request.rfqId ?? newRfqId();
+      // Minted here, never taken from the request: see `CreateRfqCommand`.
+      const rfqId = newRfqId();
       const terms = {
         rfqId,
         treasury: asParty,

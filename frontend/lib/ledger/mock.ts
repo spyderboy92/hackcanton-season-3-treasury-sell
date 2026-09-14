@@ -231,7 +231,8 @@ export class MockLedgerClient implements LedgerClient {
     if (command.invitedDealers.length === 0) {
       throw new LedgerError('INVALID_ARGUMENT', 'Invite at least one dealer.');
     }
-    const rfqId = command.rfqId ?? this.uuid();
+    // Minted here, never taken from the command, for the reason on `CreateRfqCommand`.
+    const rfqId = this.uuid();
     const rfq: Rfq = {
       rfqId,
       treasury: asParty,

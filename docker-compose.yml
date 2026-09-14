@@ -7,7 +7,11 @@
 #   localhost:6864          Canton JSON Ledger API v2
 #   localhost:6865          Canton gRPC Ledger API
 #
-#   docker compose run --rm tests   the 58-script Daml suite
+# Every published port is bound to 127.0.0.1: the ledger API is UNAUTHENTICATED,
+# so the stack must not be reachable from off the machine. See the note on the
+# canton service below.
+#
+#   docker compose run --rm tests   the 59-script Daml suite
 #   docker compose down             stop, keep ledger state
 #   docker compose down -v          stop, wipe ledger state
 
@@ -22,9 +26,16 @@ services:
       dockerfile: Dockerfile.canton
       target: runtime
     image: treasury-rfq-canton
+    # Bound to LOOPBACK, deliberately. The sandbox serves the Ledger API with no
+    # authentication at all: the acting party is whatever the caller names, so
+    # anyone who can reach these ports can read any desk's ACS and submit as any
+    # party. That is fine for a demo on one machine and is not a deployment
+    # posture — publishing them on 0.0.0.0 would put the privacy model this
+    # project exists to demonstrate behind nothing whatsoever. Real deployments
+    # put a JWT-validating participant in front; see AGENTS.md section 8.
     ports:
-      - "6864:6864"   # JSON Ledger API v2
-      - "6865:6865"   # gRPC Ledger API
+      - "127.0.0.1:6864:6864"   # JSON Ledger API v2
+      - "127.0.0.1:6865:6865"   # gRPC Ledger API
     volumes:
       - ledger-state:/var/lib/canton
     healthcheck:
@@ -49,7 +60,7 @@ services:
         NEXT_PUBLIC_LEDGER_ENDPOINT: "localhost:6864 (Canton sandbox in Docker)"
     image: treasury-rfq-frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"   # loopback, for the same reason as the ledger ports
     environment:
       # Read server-side, inside this container: it must address the Canton
       # service by its compose hostname. 127.0.0.1 here would be this
@@ -69,7 +80,12 @@ services:
       target: dar
     image: treasury-rfq-tests
     profiles: ["tests"]
-    command: ["dpm", "test", "--package-root", "daml-test"]
+    # --all --show-coverage, not a bare `dpm test`. The model is a DATA-DEPENDENCY
+    # of the test package, so without --all the coverage report counts only this
+    # package's own templates -- of which there are none -- and prints
+    # "0 defined / 0 (100.0%)" for every category. The README quotes 8/8 and 19/19;
+    # this is the invocation that produces those numbers. See AGENTS.md section 5.
+    command: ["dpm", "test", "--package-root", "daml-test", "--all", "--show-coverage"]
 
 volumes:
   # Named, so `docker compose down` keeps the ledger and `down -v` wipes it.

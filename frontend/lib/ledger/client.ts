@@ -34,8 +34,13 @@ import type {
 /* ── Commands ─────────────────────────────────────────────────────────── */
 
 export interface CreateRfqCommand {
-  /** Optional; the client mints a UUID-ish id when omitted. */
-  rfqId?: string;
+  /**
+   * No `rfqId`: the backend mints it. Nothing on-ledger makes the id unique, and
+   * `RfqFill` is matched to its RFQ by id alone — so two RFQs sharing one would let
+   * an accept on either consume the other's fill right and defeat the single-fill
+   * guarantee, with no malice required. Minting server-side is what keeps ids
+   * distinct, so the field is not offered to callers at all.
+   */
   asset: string;
   quoteCurrency: string;
   side: Side;
