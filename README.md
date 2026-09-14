@@ -16,7 +16,7 @@ On a public chain every quote is visible to every competitor. Here the RFQ is on
 git clone <repo> && cd hackcanton-season-3-treasury-sell
 docker compose up               # builds the DAR, starts a Canton sandbox, seeds the demo, serves the UI
                                 # -d detached; logs -f; down (-v wipes ledger state)
-docker compose run --rm tests   # the 56-script Daml suite
+docker compose run --rm tests   # the 58-script Daml suite
 ```
 
 | URL / port | What |
@@ -71,7 +71,7 @@ flowchart TB
 
 | Template | Signatory | Observers | Purpose |
 | --- | --- | --- | --- |
-| `RFQ` | treasury | invited dealers | Shared market request. `Close`/`Cancel` take no arguments. |
+| `RFQ` | treasury | invited dealers | Shared market request. `Close`/`Cancel` take no arguments, and are submitted with the fill right archived as a sibling command. |
 | `RfqFill` | treasury | none | Single-use right to fill. Stops a double fill without leaking. |
 | `RfqInvitation` | treasury | that dealer | Private factory for `SubmitQuote`. |
 | `Quote` | treasury + dealer | none | The price. Bilateral. `Accept`, `Revise`, `Withdraw`. |
@@ -121,9 +121,9 @@ Settlement is two-step DvP because a single `Settle` is impossible: it would nee
 
 | Layer | State |
 | --- | --- |
-| Contract model | 8 templates, 11 business choices, 5 modules, 556 lines. Canton SDK 3.5.1. |
-| Tests | 56 Daml Script tests, all passing. 100% coverage: 8/8 templates, 19/19 choices. |
+| Contract model | 8 templates, 11 business choices, 5 modules, 575 lines. Canton SDK 3.5.1. |
+| Tests | 58 Daml Script tests, all passing. 100% coverage: 8/8 templates, 19/19 choices. |
 | Frontend | Next.js 15 App Router, TypeScript strict, Tailwind v4, 11 routes, 69 source files, zero runtime deps beyond react/react-dom/next. |
 | Live ledger | Full round trip driven through the UI against a running sandbox: quote, accept, allocate, settle. |
 
-**Known gaps.** The allocated asset is pinned by `ContractId`, not escrowed — the mock holding has no lock, so a seller can spend it between the two steps (settle then aborts cleanly with contract-not-found; real CIP-56 registries provide the lock). `RFQ.Cancel` does not archive the fill right. `TokenHolding` is a mock; live CIP-56 integration is P2. Settlement requires explicit disclosure of the seller's holding. See [`AGENTS.md`](AGENTS.md) for the design rationale behind each decision and the full gap list.
+**Known gaps.** The allocated asset is pinned by `ContractId`, not escrowed — the mock holding has no lock, so a seller can spend it between the two steps (settle then aborts cleanly with contract-not-found; real CIP-56 registries provide the lock). The single-use fill right bounds reuse but not minting — the treasury is its only signatory, so it can mint a second one for the same `rfqId`; no ledger-level fix exists, because Canton 3.5.1 does not enforce contract-key uniqueness. `TokenHolding` is a mock; live CIP-56 integration is P2. Settlement requires explicit disclosure of the seller's holding. See [`AGENTS.md`](AGENTS.md) for the design rationale behind each decision and the full gap list.

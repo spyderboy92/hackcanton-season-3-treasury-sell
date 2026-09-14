@@ -169,19 +169,24 @@ lifecycleCancelledRfq : Script ()
 lifecycleCancelledRfq = do
   fx <- quotedRfq
   let p = fx.parties
-  _ <- submit p.treasury $ exerciseCmd fx.rfqCid Cancel
+  -- Cancel is argument-free and touches nothing but the RFQ, so retiring the unspent
+  -- fill right is a SIBLING root command in the same submission. It has to happen:
+  -- Cancel does not archive the dealers' quotes, and Accept never consults RFQ.status
+  -- (invariant 5), so a surviving right leaves every cancelled auction fillable at
+  -- yesterday's price. Sibling rather than nested because a nested archive would be a
+  -- consequence of a node the dealers observe, disclosing that the right exists at all.
+  _ <- submit p.treasury $ liftA2 (,) (exerciseCmd fx.rfqCid Cancel) (archiveCmd fx.fillCid)
   forA_ [p.dealerA, p.dealerB, p.dealerC] $ \d ->
     void $ assertOnly @RFQ "cancelled RFQ" d (\r -> r.status == Cancelled)
   assertAllBlind @AcceptedTrade "cancelling creates no trade"
     [p.treasury, p.dealerA, p.dealerB, p.dealerC]
 
-  -- Cancel is argument-free and touches nothing but the RFQ, so the unspent fill right
-  -- outlives it: the treasury retires it itself. Harmless while it lives -- a fill right
-  -- can only ever be spent against a Quote for the same rfqId, and Cancel does not
-  -- archive the quotes either -- but it should not be left lying around.
-  void $ assertOnly @RfqFill "the fill right survives Cancel" p.treasury (\f -> f.rfqId == demoRfqId)
-  submit p.treasury $ archiveCmd fx.fillCid
-  assertBlind @RfqFill "and the treasury retires it" p.treasury
+  -- The right is gone with the auction, and no dealer ever saw either the right or its
+  -- archive. That it cannot then be spent is asserted in
+  -- 'Tests.Authorization.authEndedRfqCannotBeFilled'.
+  assertBlind @RfqFill "Cancel retires the fill right in the same submission" p.treasury
+  assertAllBlind @RfqFill "and no dealer ever witnesses it, created or retired"
+    [p.dealerA, p.dealerB, p.dealerC]
 
 -- | Archiving is signatory-only, for every template in the model.
 --

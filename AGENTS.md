@@ -29,7 +29,7 @@ signatories and observers, enforced by the participant.
 | Path | Contents |
 | --- | --- |
 | `daml/` | The contract model package (`treasury-rfq`, version `0.0.1`). `daml/daml.yaml` pins SDK 3.5.1, deps `daml-prim` + `daml-stdlib` only. |
-| `daml/daml/TreasuryRfq/*.daml` | 5 modules, 556 lines, 8 templates, 11 business choices. **The comments are load-bearing** — they record why each shape was chosen and what breaks if it changes. |
+| `daml/daml/TreasuryRfq/*.daml` | 5 modules, 575 lines, 8 templates, 11 business choices. **The comments are load-bearing** — they record why each shape was chosen and what breaks if it changes. |
 | `daml-test/` | The test package (`treasury-rfq-tests`), `data-dependencies` on the built DAR of `daml/`. Depends on `daml-script`. |
 | `daml-test/daml/Tests.daml` | Suite index and map, plus two aggregate entry points (`privacySuite`, `fullSuite`) for running against a real ledger. |
 | `daml-test/daml/Tests/*.daml` | `Fixtures`, `Assertions`, `Lifecycle`, `Privacy`, `Authorization`, `Settlement`. |
@@ -116,7 +116,7 @@ scenario, and serves the UI.
 | `docker compose logs -f` | follow logs |
 | `docker compose down` | stop; ledger state survives in the volume |
 | `docker compose down -v` | stop and **wipe ledger state** (fresh party ids on the next `up`) |
-| `docker compose run --rm tests` | run the 56-script Daml test suite |
+| `docker compose run --rm tests` | run the 58-script Daml test suite |
 
 The toolchain image installs `dpm` and then explicitly `dpm install 3.5.1`
 because the installer pulls the latest SDK — see the trap below; the same trap
@@ -131,7 +131,7 @@ curl https://get.digitalasset.com/install/install.sh | sh
 export PATH="$HOME/.dpm/bin:$PATH"      # trap 1 — the installer does NOT do this
 dpm install 3.5.1                       # trap 2 — installer pulls latest; repo pins 3.5.1
 dpm build --all                         # builds both packages via multi-package.yaml
-dpm test --package-root daml-test       # 56 scripts
+dpm test --package-root daml-test       # 58 scripts
 ```
 
 Then, in two terminals:
@@ -358,6 +358,22 @@ the treasury binding two dealers to the same quantity. Covered by
 `authFillRightIsScopedAndSingleUse`, `authFillRightIsTreasuryOnly`, and
 `Tests.Privacy.privacyFillRightIsInvisibleToDealers`.
 
+*The obligation this creates:* because `Accept` never reads `status`, the fill
+right is the **only** thing that bounds an acceptance in time. `Close` and
+`Cancel` archive nothing but the RFQ — every dealer's `Quote` survives them — so
+any submission that ends an auction must **retire the fill right as a sibling
+root command**, or the closed or cancelled auction stays fillable at yesterday's
+price and each invited dealer is writing the treasury a free option. Sibling, not
+nested, for the same reason as invariant 3: archiving it from inside a choice on
+the RFQ would make the archive a consequence of a node every invited dealer
+observes, disclosing that the right exists at all. Both the Canton client
+(`closeRfq`/`cancelRfq` in `frontend/lib/ledger/server/ledger.ts`) and the mock
+(`transitionRfq` in `frontend/lib/ledger/mock.ts`) do this, and
+`Tests.Authorization.authEndedRfqCannotBeFilled` pins it.
+
+*What it does not bound:* minting. See section 8 — the treasury can create a
+second right for the same `rfqId`, and no ledger-level fix is available.
+
 `RfqFill` is also absent from the frontend's `LedgerTemplate` union and from
 `types.ts` on purpose: no read returns it, so no screen can render it. The
 `WireTemplate` union in `server/json-api.ts` adds it back solely because commands
@@ -443,11 +459,13 @@ Mock CIP-56-shaped asset, isolated so a live registry adapter can replace it.
 
 | Choice | Args | Returns | Controller | Assertions / effects |
 | --- | --- | --- | --- | --- |
-| `Close` | **none** | `ContractId RFQ` | `treasury` | `status == Open`. Recreates with `status = Closed`. |
-| `Cancel` | **none** | `ContractId RFQ` | `treasury` | `status == Open`. Recreates with `status = Cancelled`. |
+| `Close` | **none** | `ContractId RFQ` | `treasury` | `status == Open`. Recreates with `status = Closed`. Must be submitted with the RFQ's `RfqFill` archived as a **sibling** command (invariant 5). |
+| `Cancel` | **none** | `ContractId RFQ` | `treasury` | `status == Open`. Recreates with `status = Cancelled`. Same sibling-archive obligation as `Close`. |
 
 Argument-free by invariant 2. Archive-and-recreate so dealers observe the state
-change rather than merely losing the contract.
+change rather than merely losing the contract. Neither choice can retire the fill
+right itself — that would disclose the right to every invited dealer — so the
+retirement is the submitter's obligation, discharged as a sibling root command.
 
 #### `RfqFill` — `TreasuryRfq.Rfq`
 
@@ -457,7 +475,7 @@ change rather than merely losing the contract.
 | Signatory | `treasury` |
 | Observer | **none** |
 | `ensure` | `rfqId /= ""` |
-| Choices | none beyond implicit `Archive` (consumed by `Quote.Accept`) |
+| Choices | none beyond implicit `Archive` — consumed by `Quote.Accept`, and archived as a sibling command alongside `RFQ.Close` / `RFQ.Cancel` (invariant 5) |
 
 #### `RfqInvitation` — `TreasuryRfq.Quoting`
 
@@ -558,7 +576,7 @@ trade and never a competing quote.
 ### Running it
 
 ```bash
-dpm test --package-root daml-test                    # all 56 scripts
+dpm test --package-root daml-test                    # all 58 scripts
 dpm test --package-root daml-test --all --show-coverage
 ```
 
@@ -580,7 +598,7 @@ dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
 
 ### Organisation
 
-56 zero-argument `Script`s are discovered by the runner: 47 named assertions,
+58 zero-argument `Script`s are discovered by the runner: 49 named assertions,
 6 fixture stages, 2 aggregates, and `Demo.Bootstrap:bootstrap`.
 
 | Module | Scripts | Contents |
@@ -590,7 +608,7 @@ dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
 | `Tests.Assertions` | 0 | `assertVisible` / `assertBlind` / `assertAllBlind` / `assertOnly`. |
 | `Tests.Lifecycle` | 13 | The happy path works. |
 | `Tests.Privacy` | 10 | **The centrepiece.** What each party cannot see, at every stage. |
-| `Tests.Authorization` | 16 | What each party cannot do — all `submitMustFail`. |
+| `Tests.Authorization` | 18 | What each party cannot do — mostly `submitMustFail`; `authKnownLimitationTreasuryCanMintASecondFillRight` is the one that asserts what it still *can*. |
 | `Tests.Settlement` | 8 | DvP balances, atomicity under a failed leg, change arithmetic, `CancelAllocation` round trip. |
 | `Demo.Bootstrap` | 1 | Not a test. Seeds a live sandbox. |
 
@@ -877,7 +895,7 @@ Stated, not hidden. Each is deliberately unfixed for a recorded reason.
 | Gap | Why it is not fixed |
 | --- | --- |
 | **The allocated asset is pinned by `ContractId`, not escrowed.** `SettlementInstruction.assetHoldingCid` points at a holding that stays under the seller's control, so the seller can `Transfer` or split it between the two DvP steps. | This mock `TokenHolding` has no lock primitive. If the seller does spend it, `AllocatePaymentAndSettle` fails when it fetches the archived id — a contract-not-found rejection, not a clean assert — and the whole transaction aborts: nothing is lost and no partial settlement is possible. The seller does hold an option to walk away between the two steps. In a real deployment the pin is replaced by a **CIP-56 registry lock**, which the registry owns; building a lock or an escrow party into the mock would misrepresent where that responsibility lives. Pinned by `Tests.Settlement.settlementPinnedAssetCanBeSpentBySeller`. |
-| **`RFQ.Cancel` does not archive the `RfqFill`.** A cancelled auction leaves an unused fill right in the treasury's ACS. | Harmless — the fill right carries nothing and is visible to nobody but the treasury, and `Accept` checks `rfqId` so it cannot be used on another auction. Cleaning it up would mean passing the fill's `ContractId` into a choice on the RFQ, which **every invited dealer observes** (invariant 2). The tidy-up costs more privacy than the untidiness costs anything. |
+| **`RfqFill` bounds reuse, not minting.** The treasury is its only signatory, so it can create a second fill right for the same `rfqId` and bind two dealers to the same quantity. | No ledger-level fix is available. Contract keys need LF 2.3 and this package targets 2.2 — and raising the target does not help: **Canton 3.5.1 does not enforce key uniqueness**, verified directly against a 3.5.1 sandbox where two contracts sharing `key (treasury, rfqId)` were both accepted. A key would read as a guarantee while enforcing nothing, which is worse than the stated gap. Enforcement would need a signatory the treasury does not control — a registry or notary party — which is a topology change, not a model change. The exposure is self-inflicted and invisible to dealers (`RfqFill` has no observers), so no dealer can detect it in advance. Exercised by `Tests.Authorization.authKnownLimitationTreasuryCanMintASecondFillRight`. |
 | **`TokenHolding` is a mock, not a real CIP-56 asset.** | Live CIP-56 integration is P2. The module is isolated precisely so the swap is local: an adapter replaces `Transfer` and `Settlement`/`Quoting`/`Rfq` are untouched, because all they know about an asset is that it has an owner, a symbol, an amount and a `Transfer` choice. cETH and CBTC are both CIP-56 and differ by registry, not by workflow. |
 | **Settlement requires explicit disclosure of the seller's holding.** | Not a bug — it is Canton behaving correctly (no divulgence). It is listed because it is a **real integration requirement**: any client of this model must implement the seller→buyer handoff of the disclosed contract. See invariant 4. |
 

@@ -302,7 +302,7 @@ export class MockLedgerClient implements LedgerClient {
     if (!fillRow) {
       throw new LedgerError(
         'PRECONDITION_FAILED',
-        'This RFQ has already been filled — its fill token was consumed by an earlier accept.',
+        'This RFQ has already been filled, closed or cancelled — its fill token is gone.',
       );
     }
     fillRow.archived = true;
@@ -586,6 +586,15 @@ export class MockLedgerClient implements LedgerClient {
     }
     row.archived = true;
     const next = this.create(this.store.rfqs, { ...row.payload, status });
+
+    // Ending the auction retires the fill right, mirroring the sibling archive
+    // the Canton client submits alongside Close/Cancel. Without it `acceptQuote`
+    // still finds a live token and a closed or cancelled RFQ stays fillable,
+    // because Accept never consults the RFQ's status. The token has no
+    // observers, so no dealer witnesses this.
+    const fillRow = this.fillFor(next.payload.rfqId, next.payload.treasury);
+    if (fillRow) fillRow.archived = true;
+
     this.log('RFQ', next.payload.rfqId, stakeholders.rfq(next.payload), `RFQ ${status.toLowerCase()}`);
     return contract(next);
   }

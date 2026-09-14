@@ -31,8 +31,10 @@
 -- [Tests.Authorization] What each party cannot do: 'submitMustFail' on self-accept,
 --                   forged quotes, dealer-driven Close/Cancel, post-deadline quoting
 --                   (including the Withdraw-then-re-quote regression), expired quotes,
---                   double-filling one RFQ, wrong-side settlement legs and
---                   mis-denominated payment.
+--                   double-filling one RFQ, filling one that was closed or cancelled,
+--                   wrong-side settlement legs and mis-denominated payment. Also the one
+--                   known limitation of the single-fill token, exercised rather than
+--                   claimed: 'authKnownLimitationTreasuryCanMintASecondFillRight'.
 --
 -- [Tests.Settlement] DvP balances before and after, atomicity under a failed cash leg,
 --                   exact-payment and change arithmetic, and the CancelAllocation
@@ -112,6 +114,8 @@ fullSuite = do
   authPaymentAllocationIsValidated
   authHoldingTransferIsOwnerOnly
   authTreasuryCannotAcceptTwoQuotes
+  authEndedRfqCannotBeFilled
+  authKnownLimitationTreasuryCanMintASecondFillRight
   authFillRightIsScopedAndSingleUse
   authFillRightIsTreasuryOnly
 

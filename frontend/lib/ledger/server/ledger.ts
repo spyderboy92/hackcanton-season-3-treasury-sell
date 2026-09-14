@@ -101,13 +101,31 @@ export async function runCommand(request: CommandRequest): Promise<CommandRespon
       return { offset: tx.offset, rfq: contractOf(tx, 'RFQ', decodeRfq) };
     }
 
-    case 'closeRfq': {
-      const tx = await submit(asParty, [exercise('RFQ', request.rfqContractId, 'Close')]);
-      return { offset: tx.offset, rfq: contractOf(tx, 'RFQ', decodeRfq) };
-    }
-
+    case 'closeRfq':
     case 'cancelRfq': {
-      const tx = await submit(asParty, [exercise('RFQ', request.rfqContractId, 'Cancel')]);
+      // Ending an auction must RETIRE the fill right, not just flip the status.
+      //
+      // `Quote.Accept` deliberately never consults `RFQ.status` (invariant 5:
+      // fetching the RFQ would put a node of the accept subtree in front of
+      // every invited dealer). The fill right is therefore the only thing that
+      // bounds an acceptance — and `Close`/`Cancel` leave every dealer's Quote
+      // live. Retire the right and a closed or cancelled auction cannot be
+      // filled; leave it and each dealer is writing the treasury a free option
+      // for as long as its quote stands.
+      //
+      // SIBLING, not nested, for the same reason as `acceptQuote` below: the
+      // archive is a root command of its own. Archiving the fill from inside a
+      // choice on the RFQ would make it a consequence of a node every invited
+      // dealer observes, and the dealers would learn the fill right exists —
+      // the leak `Tests.Privacy.privacyFillRightIsInvisibleToDealers` forbids.
+      // As a root command its only informee is the treasury, which signs it.
+      const choice = request.kind === 'closeRfq' ? 'Close' : 'Cancel';
+      const fillCid = await unusedFillFor(asParty, request.rfqContractId);
+      const commands: LedgerCommand[] = [exercise('RFQ', request.rfqContractId, choice)];
+      // Absent only when the RFQ was already filled, which `Close`/`Cancel`
+      // reject anyway — so a missing right is never a reason to block the exit.
+      if (fillCid) commands.push(exercise('RfqFill', fillCid, 'Archive'));
+      const tx = await submit(asParty, commands);
       return { offset: tx.offset, rfq: contractOf(tx, 'RFQ', decodeRfq) };
     }
 
@@ -229,14 +247,36 @@ export async function runCommand(request: CommandRequest): Promise<CommandRespon
 }
 
 /**
- * The treasury's unused fill right for the RFQ being accepted.
+ * The treasury's unused fill right for the RFQ being accepted, or a rejection.
  *
- * One ACS read as the treasury covers both halves: the RFQ contract gives the
- * `rfqId`, and the fill token carrying that same id is the one `Accept` will
- * consume. `RfqFill` has the treasury as its only stakeholder, so this read is
- * strictly the treasury's own contracts.
+ * `acceptQuote` cannot proceed without one, so the absence is an error here.
+ * Ending an auction only retires the right if it is still there, which is what
+ * `unusedFillFor` below is for.
  */
 async function fillFor(treasury: string, rfqContractId: string): Promise<string> {
+  const fill = await unusedFillFor(treasury, rfqContractId);
+  if (!fill) {
+    throw new LedgerError(
+      'PRECONDITION_FAILED',
+      'This RFQ has no unused fill right left: it has already been filled, closed or cancelled.',
+    );
+  }
+  return fill;
+}
+
+/**
+ * The same lookup, reporting absence rather than rejecting it.
+ *
+ * One ACS read as the treasury covers both halves: the RFQ contract gives the
+ * `rfqId`, and the fill token carrying that same id is the one `Accept` would
+ * consume. `RfqFill` has the treasury as its only stakeholder, so this read is
+ * strictly the treasury's own contracts.
+ *
+ * A missing RFQ is still an error — you cannot close or accept what is not
+ * there — but a missing fill right is not: `closeRfq`/`cancelRfq` must be able
+ * to end an auction whose right is already gone.
+ */
+async function unusedFillFor(treasury: string, rfqContractId: string): Promise<string | null> {
   const offset = await ledgerEnd();
   const events = await activeContracts(treasury, ['RFQ', 'RfqFill'], offset);
   const rfq = events.find((e) => e.contractId === rfqContractId);
@@ -247,13 +287,7 @@ async function fillFor(treasury: string, rfqContractId: string): Promise<string>
   const fill = events.find(
     (e) => entityOf(e.templateId) === 'RfqFill' && e.createArgument.rfqId === rfqId,
   );
-  if (!fill) {
-    throw new LedgerError(
-      'PRECONDITION_FAILED',
-      'This RFQ has no unused fill right left — it has already been filled.',
-    );
-  }
-  return fill.contractId;
+  return fill ? fill.contractId : null;
 }
 
 /**

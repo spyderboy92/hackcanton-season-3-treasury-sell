@@ -293,8 +293,13 @@ authHoldingTransferIsOwnerOnly = do
 -- @knownLimitationTreasuryCanAcceptTwoQuotes@ which passed: nothing in the model stopped
 -- the treasury accepting two quotes for the same rfqId, so it could bind two dealers to
 -- the same 10 cETH and be short the asset at settlement. That was a real hole, found by
--- the tests and since closed with 'TreasuryRfq.Rfq.RfqFill' -- a single-use fill right,
+-- the tests and narrowed with 'TreasuryRfq.Rfq.RfqFill' -- a single-use fill right,
 -- signed by the treasury and observed by nobody, that @Quote.Accept@ consumes.
+--
+-- NARROWED, NOT CLOSED. What this script proves is that a SPENT right cannot be replayed.
+-- The treasury can still mint itself a fresh one, which no ledger-level mechanism
+-- available here prevents -- see 'authKnownLimitationTreasuryCanMintASecondFillRight' and
+-- AGENTS.md section 8. Do not read this script as the whole single-fill story.
 --
 -- The privacy consequence of the fix is asserted separately and is the more important
 -- half: see 'Tests.Privacy.privacyFillRightIsInvisibleToDealers'.
@@ -341,6 +346,81 @@ authFillRightIsScopedAndSingleUse = do
   submitMustFail p.treasury $ exerciseCmd fx.quoteC Accept with fillCid = fx.fillCid
   submitMustFail p.treasury $ exerciseCmd fx.quoteC Accept with fillCid = otherFill
   void $ assertVisible @AcceptedTrade "still exactly one trade" p.treasury 1
+
+-- | Ending an auction retires its fill right, and a retired right cannot be spent.
+--
+-- @Quote.Accept@ never consults @RFQ.status@ -- invariant 5, and deliberately: fetching
+-- the RFQ would put a node of the accept subtree in front of every invited dealer. So
+-- nothing in the MODEL stops an accept after @Close@ or @Cancel@; what stops it is the
+-- fill right being gone, and that is the submitter's obligation.
+--
+-- Close/Cancel therefore carry the archive of the fill right as a SIBLING root command,
+-- never nested: nested, the archive would be a consequence of a node the dealers observe
+-- and they would learn the right exists ('Tests.Privacy.privacyFillRightIsInvisibleToDealers').
+-- As a root command its only informee is the treasury, which signs it.
+--
+-- Without this, every invited dealer is writing the treasury a free option for as long as
+-- its quote stands: Close and Cancel archive nothing but the RFQ, so the quotes stay live
+-- and fillable at yesterday's price. Mirrored in the client by
+-- @closeRfq@/@cancelRfq@ in frontend/lib/ledger/server/ledger.ts.
+authEndedRfqCannotBeFilled : Script ()
+authEndedRfqCannotBeFilled = do
+  -- Closed.
+  closed <- quotedRfq
+  let c = closed.parties
+  _ <- submit c.treasury $
+    liftA2 (,) (exerciseCmd closed.rfqCid Close) (archiveCmd closed.fillCid)
+  assertBlind @RfqFill "Close retires the fill right" c.treasury
+  submitMustFail c.treasury $ exerciseCmd closed.quoteB Accept with fillCid = closed.fillCid
+  assertBlind @AcceptedTrade "a closed RFQ cannot be filled" c.treasury
+
+  -- Cancelled. Same shape, and the dealers' quotes are still live either way --
+  -- which is precisely why the right, not the quote, has to be the thing that goes.
+  cancelled <- quotedRfq
+  let x = cancelled.parties
+  _ <- submit x.treasury $
+    liftA2 (,) (exerciseCmd cancelled.rfqCid Cancel) (archiveCmd cancelled.fillCid)
+  assertBlind @RfqFill "Cancel retires the fill right" x.treasury
+  void $ assertOnly @Quote "the losing dealer's quote outlives the cancel" x.dealerA
+    (\q -> q.dealer == x.dealerA)
+  submitMustFail x.treasury $ exerciseCmd cancelled.quoteB Accept with fillCid = cancelled.fillCid
+  assertBlind @AcceptedTrade "a cancelled RFQ cannot be filled" x.treasury
+
+-- | KNOWN LIMITATION, exercised: single-fill is enforced against REUSE, not against a
+-- second mint by the treasury.
+--
+-- 'authTreasuryCannotAcceptTwoQuotes' proves a spent right cannot be replayed, and
+-- 'authFillRightIsTreasuryOnly' proves no dealer can forge one. Neither binds the
+-- treasury, which is @RfqFill@'s only signatory: it can simply create a second right
+-- naming the same rfqId, and @Accept@'s rfqId and treasury checks both pass.
+--
+-- WHY IT IS NOT FIXED. The uniqueness would have to come from the ledger, and it cannot:
+-- contract keys are unavailable on this package's LF version (2.2 -- keys land in 2.3),
+-- and raising the target does not help, because Canton 3.5.1 does not enforce key
+-- uniqueness. Verified directly against a 3.5.1 sandbox: two @RfqFill@ contracts sharing
+-- @key (treasury, rfqId)@ were both accepted. A key here would read as a guarantee while
+-- enforcing nothing, which is worse than the honest gap. Recorded in AGENTS.md section 8.
+--
+-- What this costs: a treasury that mints a second right can bind two dealers to the same
+-- quantity and be short the asset at settlement. It is self-inflicted and visible to
+-- nobody else -- @RfqFill@ has no observers -- so no dealer can detect it in advance.
+authKnownLimitationTreasuryCanMintASecondFillRight : Script ()
+authKnownLimitationTreasuryCanMintASecondFillRight = do
+  fx <- quotedRfq
+  let p = fx.parties
+
+  -- The auction is filled once, properly.
+  _ <- submit p.treasury $
+    liftA2 (,) (exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid) (exerciseCmd fx.rfqCid Close)
+
+  -- And then filled again: nothing in the model stops the treasury minting itself a
+  -- fresh right for the same rfqId.
+  secondFill <- submit p.treasury $ createCmd RfqFill with rfqId = demoRfqId, treasury = p.treasury
+  _ <- submit p.treasury $ exerciseCmd fx.quoteA Accept with fillCid = secondFill
+
+  -- Two dealers, both bound to the same 10 cETH. Asserted so the day this stops being
+  -- true, this script fails and the gap can be closed in AGENTS.md.
+  void $ assertVisible @AcceptedTrade "the treasury can bind two dealers" p.treasury 2
 
 -- | The fill right is the treasury's alone: no dealer can mint one, and no dealer can
 -- archive the treasury's.

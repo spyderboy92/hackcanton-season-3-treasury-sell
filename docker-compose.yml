@@ -7,7 +7,7 @@
 #   localhost:6864          Canton JSON Ledger API v2
 #   localhost:6865          Canton gRPC Ledger API
 #
-#   docker compose run --rm tests   the 56-script Daml suite
+#   docker compose run --rm tests   the 58-script Daml suite
 #   docker compose down             stop, keep ledger state
 #   docker compose down -v          stop, wipe ledger state
 
