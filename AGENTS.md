@@ -644,6 +644,25 @@ Named blind spots proved for a losing dealer: competitor `Quote`, `AcceptedTrade
 `SettlementInstruction`, `SettlementReceipt`, and `RfqFill`. The one thing it does
 see is the shared RFQ transitioning `Open → Closed`.
 
+### What this suite does NOT pin: the client-side half of invariant 5
+
+The suite covers the **model**. It does not execute a line of TypeScript, and
+there is no JS test harness in this repo, so the client half of invariant 5 is
+unpinned: delete the sibling archive at
+`frontend/lib/ledger/server/ledger.ts` (`closeRfq`/`cancelRfq`) or at
+`frontend/lib/ledger/mock.ts` (`transitionRfq`) and **every one of the 59
+scripts still passes**. `Tests.Authorization.authEndedRfqCannotBeFilled`
+performs the archive itself inside the script, so what it proves is that a spent
+right cannot be replayed — which `authFillRightIsScopedAndSingleUse` already
+proved — not that the UI's close path retires the right.
+
+The consequence is that the free-option hole is reachable from the Treasury desk
+again the moment either line is dropped, silently. Until a harness exists, treat
+those two archives as covered by review only: if you touch `closeRfq`,
+`cancelRfq` or `transitionRfq`, re-check the fill right by hand against a live
+sandbox — close an auction, then try to accept a quote that was standing when it
+closed, and expect a rejection.
+
 ---
 
 ## 6. Frontend architecture

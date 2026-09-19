@@ -295,6 +295,20 @@ export class MockLedgerClient implements LedgerClient {
       throw new LedgerError('PRECONDITION_FAILED', 'Quote has expired.');
     }
 
+    // The quote and the RFQ must name the same auction. Canton rejects a
+    // mismatched pair itself — `Accept` asserts `fill.rfqId == rfqId` and the
+    // Canton client derives the fill right from the RFQ contract id — but
+    // nothing here would, and `transitionRfq` archives a fill right, so an
+    // unrelated auction's right would be destroyed by a pair the ledger would
+    // have refused. Mock/ledger parity is the mock's only claim to honesty.
+    const rfqRow = this.active(this.store.rfqs, command.rfqContractId, 'RFQ');
+    if (rfqRow.payload.rfqId !== quote.rfqId) {
+      throw new LedgerError(
+        'INVALID_ARGUMENT',
+        'The quote and the RFQ name different auctions.',
+      );
+    }
+
     // Accept takes the treasury's fill token and archives it. Resolved here
     // rather than passed in, exactly as the Canton client resolves it, so the
     // command signature stays the same for both backends. Checked before any

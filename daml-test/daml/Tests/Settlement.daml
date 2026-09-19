@@ -334,15 +334,14 @@ settlementBuySideReversesBothLegs = do
 
   -- After: the asset arrived at the treasury and the cash left it -- the mirror of
   -- 'settlementMovesBothLegs', which asserts the same numbers in the other direction.
-  let payment = demoQuantity * priceDealerB
   assertBalance "after settle" p.treasury demoAsset demoQuantity
-  assertBalance "after settle" p.treasury demoCurrency (dealerCashBalance - payment)
+  assertBalance "after settle" p.treasury demoCurrency (dealerCashBalance - winningPayment)
   assertBalance "after settle" p.dealerB demoAsset (treasuryAssetBalance - demoQuantity)
-  assertBalance "after settle" p.dealerB demoCurrency payment
+  assertBalance "after settle" p.dealerB demoCurrency winningPayment
 
   -- And the receipt names the reversed roles, which is the thing 'tradeParties' decides.
   (_, receipt) <- assertOnly @SettlementReceipt "a Buy receipt" p.treasury
     (\r -> r.rfqId == demoRfqId)
   receipt.buyer === p.treasury
   receipt.seller === p.dealerB
-  receipt.paymentAmount === payment
+  receipt.paymentAmount === winningPayment

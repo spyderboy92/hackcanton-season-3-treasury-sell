@@ -18,34 +18,45 @@
 import { LedgerError, type LedgerTemplate } from '../client';
 import type { CommandRequest, CommandKind, QueryRequest } from '../wire';
 
-const KINDS = [
-  'createRfq',
-  'closeRfq',
-  'cancelRfq',
-  'acceptQuote',
-  'submitQuote',
-  'reviseQuote',
-  'withdrawQuote',
-  'declineInvitation',
-  'allocateAsset',
-  'settle',
-] as const satisfies readonly CommandKind[];
+/**
+ * Both sets are records keyed by the union, not lists of it: a list only proves
+ * that everything in it is a member, so a new `CommandRequest` variant left out
+ * of one would typecheck here and then 400 at the boundary — with the AGENTS §7
+ * recipe telling the next contributor the work is done. `Record<CommandKind, true>`
+ * is total, so the omission is a compile error instead.
+ */
+const KINDS = {
+  createRfq: true,
+  closeRfq: true,
+  cancelRfq: true,
+  acceptQuote: true,
+  submitQuote: true,
+  reviseQuote: true,
+  withdrawQuote: true,
+  declineInvitation: true,
+  allocateAsset: true,
+  settle: true,
+} satisfies Record<CommandKind, true>;
 
-const TEMPLATES: readonly LedgerTemplate[] = [
-  'RFQ',
-  'RfqInvitation',
-  'Quote',
-  'AcceptedTrade',
-  'SettlementInstruction',
-  'SettlementReceipt',
-  'TokenHolding',
-];
+const TEMPLATES = {
+  RFQ: true,
+  RfqInvitation: true,
+  Quote: true,
+  AcceptedTrade: true,
+  SettlementInstruction: true,
+  SettlementReceipt: true,
+  TokenHolding: true,
+} satisfies Record<LedgerTemplate, true>;
 
 const SIDES = ['Buy', 'Sell'] as const;
 type ValidatedSide = (typeof SIDES)[number];
 
 function isKind(v: unknown): v is CommandKind {
-  return typeof v === 'string' && (KINDS as readonly string[]).includes(v);
+  return typeof v === 'string' && Object.hasOwn(KINDS, v);
+}
+
+function isTemplate(v: unknown): v is LedgerTemplate {
+  return typeof v === 'string' && Object.hasOwn(TEMPLATES, v);
 }
 
 function isSide(v: unknown): v is ValidatedSide {
@@ -112,12 +123,14 @@ export function parseQueryRequest(body: unknown): QueryRequest {
   let templates: LedgerTemplate[] | undefined;
   if (o.templates !== undefined && o.templates !== null) {
     if (!Array.isArray(o.templates)) invalid('`templates` must be an array.');
+    const named: LedgerTemplate[] = [];
     for (const t of o.templates) {
-      if (typeof t !== 'string' || !TEMPLATES.includes(t as LedgerTemplate)) {
+      if (!isTemplate(t)) {
         invalid(`\`templates\` contains an unknown template: ${JSON.stringify(t)}.`);
       }
+      named.push(t);
     }
-    templates = o.templates as LedgerTemplate[];
+    templates = named;
   }
 
   if (o.events !== undefined && typeof o.events !== 'boolean') {
@@ -135,7 +148,7 @@ export function parseCommandRequest(body: unknown): CommandRequest {
   const o = object(body);
   if (!isKind(o.kind)) {
     invalid(
-      `Unknown command \`kind\`: ${JSON.stringify(o.kind)}. Expected one of ${KINDS.join(', ')}.`,
+      `Unknown command \`kind\`: ${JSON.stringify(o.kind)}. Expected one of ${Object.keys(KINDS).join(', ')}.`,
     );
   }
   const kind = o.kind;
