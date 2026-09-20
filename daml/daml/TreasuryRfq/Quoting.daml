@@ -1,0 +1,174 @@
+-- | The bilateral quoting lifecycle: RfqInvitation -> Quote -> RfqInvitation.
+--
+-- RfqInvitation and Quote are colocated because they are mutually recursive at the type
+-- level -- SubmitQuote returns a @ContractId Quote@ and Withdraw returns a
+-- @ContractId RfqInvitation@. Daml has no forward declarations (no .hs-boot), so the pair
+-- cannot be split across two modules; the alternative would be duplicating a type, which
+-- is worse. The module is named for the lifecycle the two templates form rather than for
+-- either one of them.
+module TreasuryRfq.Quoting where
+
+import TreasuryRfq.Rfq (RfqFill)
+import TreasuryRfq.Settlement (AcceptedTrade(..))
+import TreasuryRfq.Types
+
+-- One invitation per dealer: the private factory that lets a dealer mint a Quote carrying
+-- the treasury's signature without the treasury ever seeing -- or co-signing -- a price on
+-- the shared RFQ. Only the treasury and this one dealer are stakeholders, so a competitor
+-- cannot even tell how many dealers were invited from this contract.
+template RfqInvitation
+  with
+    rfqId : Text
+    treasury : Party
+    dealer : Party
+    asset : Text
+    quoteCurrency : Text
+    side : Side
+    quantity : Decimal
+    quoteDeadline : Optional Time
+  where
+    signatory treasury
+    observer dealer
+
+    ensure
+      rfqId /= ""
+        && quantity > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && treasury /= dealer
+
+    -- Consuming: one live quote per invitation. Re-quoting goes through Quote.Revise,
+    -- and Quote.Withdraw hands the invitation back.
+    choice SubmitQuote : ContractId Quote
+      with
+        price : Decimal
+        expiry : Optional Time
+      controller dealer
+      do
+        assertMsg "price must be positive" (price > 0.0)
+        assertNotPast "the RFQ quote deadline" quoteDeadline
+        assertInFuture "the quote expiry" expiry
+        now <- getTime
+        create Quote with
+          rfqId
+          treasury
+          dealer
+          asset
+          quoteCurrency
+          side
+          quantity
+          price
+          quoteDeadline
+          expiry
+          submittedAt = now
+
+    -- Consuming, and deliberately empty: declining leaves no trace beyond the archive,
+    -- so the treasury learns nothing about why.
+    choice Decline : ()
+      controller dealer
+      do pure ()
+
+-- The price lives ONLY here. Both parties sign, so a dealer cannot mint a Quote without
+-- treasury authority delegated through an invitation, and the treasury cannot forge one.
+-- There are NO observers: this is the contract the whole privacy story turns on.
+template Quote
+  with
+    rfqId : Text
+    treasury : Party
+    dealer : Party
+    asset : Text
+    quoteCurrency : Text
+    side : Side
+    quantity : Decimal
+    price : Decimal
+    -- Carried from the invitation so Withdraw can restore it and Revise can enforce it.
+    quoteDeadline : Optional Time
+    expiry : Optional Time
+    submittedAt : Time
+  where
+    signatory treasury, dealer
+
+    ensure
+      rfqId /= ""
+        && quantity > 0.0
+        && price > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && treasury /= dealer
+
+    -- Exercised as a SIBLING command of RFQ.Close in the same submission, never nested
+    -- inside it: nesting would put this subtree under a node the losing dealers observe.
+    --
+    -- 'fillCid' is the treasury's single-use right to fill this RFQ (TreasuryRfq.Rfq.RfqFill).
+    -- Consuming it here is what stops the treasury binding two dealers to the same quantity.
+    -- The treasury is RfqFill's only stakeholder, so neither the winning dealer nor -- far
+    -- more importantly -- any losing dealer becomes an informee of a node in this subtree
+    -- that it was not already entitled to. Checking RFQ.status instead would have required
+    -- fetching the RFQ, whose informees include every invited dealer.
+    choice Accept : ContractId AcceptedTrade
+      with
+        fillCid : ContractId RfqFill
+      controller treasury
+      do
+        -- 'expiry', and deliberately NOT 'quoteDeadline'. The two bound different
+        -- things: the deadline closes the BIDDING window (no new quote, no revision --
+        -- 'Tests.Authorization.authNoQuotingAfterTheDeadline'), while 'expiry' is the
+        -- dealer's own statement of how long its price stands. Asserting the deadline
+        -- here would make the treasury's acceptance window a side effect of the dealer
+        -- submission cut-off, and would void bids that were submitted in good time.
+        --
+        -- A dealer that wants its price to lapse with the auction says so, by passing
+        -- 'expiry = Some deadline' -- which is what the desk UI sends by default
+        -- (frontend/components/desks/DealerDesk.tsx). 'None' means what it says: no
+        -- expiry. A dealer can also pull the price at any time with 'Withdraw'.
+        -- Enforced by 'Tests.Authorization.authExpiredQuoteCannotBeAccepted'.
+        assertNotPast "the quote expiry" expiry
+        fill <- fetch fillCid
+        assertMsg "the fill right belongs to a different RFQ" (fill.rfqId == rfqId)
+        assertMsg "the fill right belongs to a different treasury" (fill.treasury == treasury)
+        -- Consuming, so a second Accept against the same RFQ fails on a stale ContractId.
+        archive fillCid
+        now <- getTime
+        -- The cash leg is fixed here, at accept time, from these exact terms; settlement
+        -- recomputes it with the same 'paymentFor' and SettlementInstruction.ensure
+        -- re-asserts paymentAmount == assetQuantity * price, so the two cannot diverge.
+        assertMsg
+          "quantity * price must be a positive cash amount"
+          (paymentFor quantity price > 0.0)
+        create AcceptedTrade with
+          rfqId
+          treasury
+          dealer
+          asset
+          quoteCurrency
+          side
+          quantity
+          price
+          acceptedAt = now
+
+    -- Improving (or worsening) a live quote. Still bilateral, still invisible to competitors.
+    choice Revise : ContractId Quote
+      with
+        newPrice : Decimal
+      controller dealer
+      do
+        assertMsg "newPrice must be positive" (newPrice > 0.0)
+        assertNotPast "the RFQ quote deadline" quoteDeadline
+        assertNotPast "the quote expiry" expiry
+        now <- getTime
+        create this with price = newPrice, submittedAt = now
+
+    -- Pull the price off the table but stay in the auction: the invitation is recreated so
+    -- the dealer can quote again.
+    choice Withdraw : ContractId RfqInvitation
+      controller dealer
+      do
+        create RfqInvitation with
+          rfqId
+          treasury
+          dealer
+          asset
+          quoteCurrency
+          side
+          quantity
+          quoteDeadline

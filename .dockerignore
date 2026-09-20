@@ -1,0 +1,33 @@
+# Build context hygiene for the repo-root context (the Canton service).
+# Keep this tight: the frontend tree alone is ~635 MB on a developer machine
+# and none of it belongs in the Canton build context.
+
+# VCS + editor
+.git
+.gitignore
+.gitattributes
+.github
+.vscode
+.idea
+**/.DS_Store
+
+# Daml build output — the image builds its own DAR
+**/.daml
+**/.dpm
+log/
+**/dist/
+
+# The whole frontend tree: the frontend image uses ./frontend as its own context
+frontend/
+
+# Node, anywhere
+**/node_modules
+**/.next
+**/.next-*
+**/*.tsbuildinfo
+
+# Docs and compose plumbing do not affect the build
+*.md
+docs/
+docker-compose.yml
+.dockerignore

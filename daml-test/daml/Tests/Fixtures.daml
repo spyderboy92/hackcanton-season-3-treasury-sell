@@ -1,0 +1,384 @@
+-- | Party allocation and the canonical demo scenario from spec section 4, exposed as
+-- a chain of stage records.
+--
+-- Every stage is a separate 'Script' that builds on the previous one and returns a
+-- NAMED record, never a positional tuple: tests that only care about the losing
+-- dealer should not have to count commas. The records are deliberately flat rather
+-- than nested, so a test reads @fx.parties.dealerA@ and not
+-- @fx.allocated.accepted.quoted.open.parties.dealerA@.
+--
+-- The numbers are fixed by spec section 4 and are shared with the frontend demo
+-- (see Demo.Bootstrap, which seeds a live sandbox from the same constants):
+--
+--   Treasury SELLS 10 cETH, quoted in USD, to one of Dealers A/B/C.
+--   Dealer A quotes 3020.00, Dealer B quotes 3040.00, Dealer C quotes 3010.00.
+--   On a sell the best bid wins, so Dealer B wins and the cash leg is 30,400.00 USD.
+--   Opening balances: Treasury 25 cETH, each dealer 1,000,000 USD, issued by Registry.
+module Tests.Fixtures where
+
+import DA.Text (isPrefixOf)
+import DA.Time (addRelTime, hours)
+import Daml.Script
+
+import TreasuryRfq.Holding (TokenHolding(..))
+import TreasuryRfq.Quoting (Accept(..), Quote, RfqInvitation(..), SubmitQuote(..))
+import TreasuryRfq.Rfq (Close(..), RFQ(..), RfqFill(..))
+import TreasuryRfq.Settlement
+  ( AcceptedTrade
+  , AllocateAsset(..)
+  , AllocatePaymentAndSettle(..)
+  , SettlementInstruction
+  , SettlementReceipt
+  )
+import TreasuryRfq.Types (RfqStatus(..), Side(..))
+
+-- ---------------------------------------------------------------------------
+-- Spec section 4 constants. Change them here and the whole suite plus the
+-- sandbox bootstrap move together.
+-- ---------------------------------------------------------------------------
+
+demoRfqId : Text
+demoRfqId = "RFQ-2026-0001"
+
+demoAsset : Text
+demoAsset = "cETH"
+
+demoCurrency : Text
+demoCurrency = "USD"
+
+demoQuantity : Decimal
+demoQuantity = 10.0
+
+priceDealerA : Decimal
+priceDealerA = 3020.0
+
+-- | The winning bid: on a treasury SELL the highest bid wins.
+priceDealerB : Decimal
+priceDealerB = 3040.0
+
+priceDealerC : Decimal
+priceDealerC = 3010.0
+
+treasuryAssetBalance : Decimal
+treasuryAssetBalance = 25.0
+
+dealerCashBalance : Decimal
+dealerCashBalance = 1000000.0
+
+-- | 10 cETH * 3040.00 USD.
+winningPayment : Decimal
+winningPayment = 30400.0
+
+-- ---------------------------------------------------------------------------
+-- Parties
+-- ---------------------------------------------------------------------------
+
+-- | The demo cast. 'stranger' is allocated but never invited to anything: it is the
+-- control group for the disclosure assertions.
+data DemoParties = DemoParties with
+    treasury : Party
+    dealerA : Party
+    dealerB : Party
+    dealerC : Party
+    auditor : Party
+    registry : Party
+    stranger : Party
+  deriving (Eq, Show)
+
+-- | Allocate with an id hint so the party ids read as @Treasury::1220...@ rather than
+-- as an opaque hash: the sandbox bootstrap prints these for the frontend config.
+allocateNamed : Text -> Script Party
+allocateNamed name = allocatePartyByHint (PartyIdHint name)
+
+-- | Allocate the demo cast.
+--
+-- Id hints must be unique per participant, and the aggregate entry points in 'Tests'
+-- run several scenarios against one ledger, so a cast after the first is suffixed with
+-- the number of casts already allocated. The first cast on any ledger -- including a
+-- live sandbox that already hosts a participant admin party -- is plain @Treasury@,
+-- @DealerA@, ..., which is what Demo.Bootstrap prints for the frontend config.
+allocateDemoParties : Script DemoParties
+allocateDemoParties = do
+  known <- listKnownParties
+  let ids = map (\d -> partyToText d.party) known
+      alreadyCast = length (filter (isPrefixOf "Treasury") ids)
+      suffix = if alreadyCast == 0 then "" else "-" <> show alreadyCast
+      named name = allocateNamed (name <> suffix)
+  treasury <- named "Treasury"
+  dealerA <- named "DealerA"
+  dealerB <- named "DealerB"
+  dealerC <- named "DealerC"
+  auditor <- named "Auditor"
+  registry <- named "Registry"
+  stranger <- named "Stranger"
+  pure DemoParties with ..
+
+-- | The dealers that lose the auction: Dealer B wins, so A and C are the parties whose
+-- blindness the privacy suite proves.
+losingDealers : DemoParties -> [Party]
+losingDealers p = [p.dealerA, p.dealerC]
+
+-- ---------------------------------------------------------------------------
+-- Stage 1: holdings minted, RFQ open, three invitations outstanding
+-- ---------------------------------------------------------------------------
+
+data OpenRfq = OpenRfq with
+    parties : DemoParties
+    rfqId : Text
+    rfqCid : ContractId RFQ
+    fillCid : ContractId RfqFill
+    invitationA : ContractId RfqInvitation
+    invitationB : ContractId RfqInvitation
+    invitationC : ContractId RfqInvitation
+    treasuryAsset : ContractId TokenHolding
+    cashA : ContractId TokenHolding
+    cashB : ContractId TokenHolding
+    cashC : ContractId TokenHolding
+    quoteDeadline : Optional Time
+  deriving (Eq, Show)
+
+-- | Mint one holding. The Registry is the issuer/signatory, the holder is an observer,
+-- so a dealer can never see another dealer's cash.
+mintHolding : Party -> Party -> Text -> Decimal -> Script (ContractId TokenHolding)
+mintHolding registry owner symbol amount =
+  submit registry $ createCmd TokenHolding with issuer = registry, owner, symbol, amount
+
+-- | One dealer's invitation. Signed by the treasury alone, observed by that dealer
+-- alone. Returned as a payload rather than submitted, so 'openRfq' can put all five
+-- creates in one transaction.
+invitationFor : DemoParties -> Optional Time -> Party -> RfqInvitation
+invitationFor p quoteDeadline dealer = RfqInvitation with
+  rfqId = demoRfqId
+  treasury = p.treasury
+  dealer
+  asset = demoAsset
+  quoteCurrency = demoCurrency
+  side = Sell
+  quantity = demoQuantity
+  quoteDeadline
+
+openRfq : Script OpenRfq
+openRfq = do
+  parties <- allocateDemoParties
+  now <- getTime
+  -- Ledger time, computed relative to "now" rather than pinned to a literal, so the
+  -- same fixture works on the static-time test ledger and on a wall-clock sandbox.
+  let quoteDeadline = Some (addRelTime now (hours 1))
+
+  treasuryAsset <- mintHolding parties.registry parties.treasury demoAsset treasuryAssetBalance
+  cashA <- mintHolding parties.registry parties.dealerA demoCurrency dealerCashBalance
+  cashB <- mintHolding parties.registry parties.dealerB demoCurrency dealerCashBalance
+  cashC <- mintHolding parties.registry parties.dealerC demoCurrency dealerCashBalance
+
+  -- The RFQ, the treasury's single-use fill right and the three invitations are one
+  -- atomic act of opening an auction, so they go to the ledger as five commands in one
+  -- transaction: there is no instant at which an invited dealer can see a live RFQ that
+  -- the treasury has no right to fill.
+  --
+  -- RfqFill is signed by the treasury and observed by NOBODY. Its create node has a
+  -- single informee, so the dealers -- who are informees of the RFQ and of their own
+  -- invitation in this same transaction -- never learn it exists.
+  -- 'Tests.Privacy.privacyFillRightIsInvisibleToDealers' asserts exactly that.
+  ((rfqCid, fillCid), (invitationA, invitationB, invitationC)) <-
+    submit parties.treasury $
+      (\r f a b c -> ((r, f), (a, b, c)))
+        <$> createCmd RFQ with
+              rfqId = demoRfqId
+              treasury = parties.treasury
+              asset = demoAsset
+              quoteCurrency = demoCurrency
+              side = Sell
+              quantity = demoQuantity
+              quoteDeadline
+              invitedDealers = [parties.dealerA, parties.dealerB, parties.dealerC]
+              status = Open
+        <*> createCmd RfqFill with rfqId = demoRfqId, treasury = parties.treasury
+        <*> createCmd (invitationFor parties quoteDeadline parties.dealerA)
+        <*> createCmd (invitationFor parties quoteDeadline parties.dealerB)
+        <*> createCmd (invitationFor parties quoteDeadline parties.dealerC)
+
+  pure OpenRfq with rfqId = demoRfqId, ..
+
+-- ---------------------------------------------------------------------------
+-- Stage 2: all three dealers have quoted
+-- ---------------------------------------------------------------------------
+
+data QuotedRfq = QuotedRfq with
+    parties : DemoParties
+    rfqId : Text
+    rfqCid : ContractId RFQ
+    fillCid : ContractId RfqFill
+    quoteA : ContractId Quote
+    quoteB : ContractId Quote
+    quoteC : ContractId Quote
+    treasuryAsset : ContractId TokenHolding
+    cashA : ContractId TokenHolding
+    cashB : ContractId TokenHolding
+    cashC : ContractId TokenHolding
+    quoteDeadline : Optional Time
+  deriving (Eq, Show)
+
+quotedRfq : Script QuotedRfq
+quotedRfq = do
+  fx <- openRfq
+  let p = fx.parties
+  quoteA <- submit p.dealerA $
+    exerciseCmd fx.invitationA SubmitQuote with price = priceDealerA, expiry = None
+  quoteB <- submit p.dealerB $
+    exerciseCmd fx.invitationB SubmitQuote with price = priceDealerB, expiry = None
+  quoteC <- submit p.dealerC $
+    exerciseCmd fx.invitationC SubmitQuote with price = priceDealerC, expiry = None
+  pure QuotedRfq with
+    parties = p
+    rfqId = fx.rfqId
+    rfqCid = fx.rfqCid
+    fillCid = fx.fillCid
+    treasuryAsset = fx.treasuryAsset
+    cashA = fx.cashA
+    cashB = fx.cashB
+    cashC = fx.cashC
+    quoteDeadline = fx.quoteDeadline
+    ..
+
+-- ---------------------------------------------------------------------------
+-- Stage 3: Dealer B's quote accepted and the RFQ closed, in ONE submission
+-- ---------------------------------------------------------------------------
+
+data AcceptedRfq = AcceptedRfq with
+    parties : DemoParties
+    rfqId : Text
+    closedRfqCid : ContractId RFQ
+    tradeCid : ContractId AcceptedTrade
+    quoteA : ContractId Quote
+    quoteC : ContractId Quote
+    treasuryAsset : ContractId TokenHolding
+    cashA : ContractId TokenHolding
+    cashB : ContractId TokenHolding
+    cashC : ContractId TokenHolding
+  deriving (Eq, Show)
+
+-- | THE SIBLING-COMMAND RULE.
+--
+-- @Quote.Accept@ and @RFQ.Close@ go to the ledger as TWO COMMANDS IN ONE SUBMISSION,
+-- combined here with 'liftA2' because Daml Script's 'Commands' is an Applicative and
+-- not a Monad -- which is precisely the point: the two commands cannot depend on each
+-- other, so neither can end up inside the other's transaction subtree.
+--
+-- Why this matters. Every invited dealer is an observer of the RFQ, so every dealer
+-- sees the Close exercise node AND everything underneath it. If Close were implemented
+-- to accept the winning quote (or if Accept were nested inside the Close subtree), the
+-- winning price, the winning dealer and the resulting AcceptedTrade would all hang
+-- below a node that Dealer A and Dealer C are stakeholders on, and they would read the
+-- winning price straight off their own transaction stream. As siblings, the two
+-- subtrees are disjoint: the losing dealers are stakeholders on the RFQ node only, so
+-- they observe "the auction closed" and nothing else.
+--
+-- Atomicity is still guaranteed -- one submission is one transaction, so the auction
+-- cannot close without the winner being bound, or vice versa.
+--
+-- 'Tests.Privacy.privacyLosingDealerBlindAfterAccept' asserts the consequence
+-- immediately after this submission.
+acceptedRfq : Script AcceptedRfq
+acceptedRfq = do
+  fx <- quotedRfq
+  let p = fx.parties
+  (tradeCid, closedRfqCid) <-
+    submit p.treasury $
+      liftA2
+        (,)
+        (exerciseCmd fx.quoteB Accept with fillCid = fx.fillCid)
+        (exerciseCmd fx.rfqCid Close)
+  pure AcceptedRfq with
+    parties = p
+    rfqId = fx.rfqId
+    quoteA = fx.quoteA
+    quoteC = fx.quoteC
+    treasuryAsset = fx.treasuryAsset
+    cashA = fx.cashA
+    cashB = fx.cashB
+    cashC = fx.cashC
+    ..
+
+-- ---------------------------------------------------------------------------
+-- Stage 4: the seller has allocated its asset leg (half-settled DvP)
+-- ---------------------------------------------------------------------------
+
+data AllocatedRfq = AllocatedRfq with
+    parties : DemoParties
+    rfqId : Text
+    closedRfqCid : ContractId RFQ
+    instructionCid : ContractId SettlementInstruction
+    treasuryAsset : ContractId TokenHolding
+    cashB : ContractId TokenHolding
+  deriving (Eq, Show)
+
+allocatedRfq : Script AllocatedRfq
+allocatedRfq = do
+  fx <- acceptedRfq
+  let p = fx.parties
+  -- side == Sell, so the seller is the treasury and it nominates the cETH it will
+  -- deliver. The auditor is named here and only ever becomes an observer on the
+  -- receipt at the end of the chain.
+  instructionCid <- submit p.treasury $
+    exerciseCmd fx.tradeCid AllocateAsset with
+      assetHoldingCid = fx.treasuryAsset
+      auditor = Some p.auditor
+  pure AllocatedRfq with
+    parties = p
+    rfqId = fx.rfqId
+    closedRfqCid = fx.closedRfqCid
+    treasuryAsset = fx.treasuryAsset
+    cashB = fx.cashB
+    ..
+
+-- | Submit options for the buyer's half of the DvP.
+--
+-- MODEL FINDING (reported, not worked around): the buyer CANNOT settle with a plain
+-- @submit buyer@. @AllocatePaymentAndSettle@ fetches and then exercises Transfer on the
+-- seller's allocated holding, and the buyer is not a stakeholder on that holding --
+-- TokenHolding's stakeholders are the issuer and the owner. Authorization is fine (the
+-- seller signs the instruction, so the seller's authority is present in the exercise);
+-- what is missing is VISIBILITY, and Canton has no divulgence, so storing the
+-- ContractId on the instruction does not make the contract readable to the buyer. The
+-- submission is rejected with "Attempt to fetch or exercise a contract not visible to
+-- the reading parties".
+--
+-- The fix is explicit disclosure: the seller hands the buyer the disclosed contract
+-- payload and the buyer attaches it to its submission. That is a real, supported Canton
+-- mechanism and it is what the frontend must do -- the dealer's "settle" call has to
+-- carry the treasury's disclosed holding. It is recorded here rather than hidden inside
+-- a helper comment because it is a genuine integration requirement, not a test detail.
+-- 'Tests.Settlement.settlementRequiresDisclosureOfTheSellersLeg' pins the behaviour.
+buyerSettlementOptions : Party -> Party -> ContractId TokenHolding -> Script SubmitOptions
+buyerSettlementOptions buyer seller assetHoldingCid = do
+  disclosed <- queryDisclosure seller assetHoldingCid
+  case disclosed of
+    Some d -> pure (actAs buyer <> disclose d)
+    None -> abort "the seller's allocated holding could not be disclosed to the buyer"
+
+-- ---------------------------------------------------------------------------
+-- Stage 5: atomic DvP done, receipt issued
+-- ---------------------------------------------------------------------------
+
+data SettledRfq = SettledRfq with
+    parties : DemoParties
+    rfqId : Text
+    closedRfqCid : ContractId RFQ
+    receiptCid : ContractId SettlementReceipt
+  deriving (Eq, Show)
+
+settledRfq : Script SettledRfq
+settledRfq = do
+  fx <- allocatedRfq
+  let p = fx.parties
+  -- The buyer (Dealer B) nominates its cash leg; both transfers happen inside this one
+  -- exercise, so delivery and payment are indivisible. The seller's cETH holding is
+  -- attached as an explicit disclosure -- see 'buyerSettlementOptions'.
+  opts <- buyerSettlementOptions p.dealerB p.treasury fx.treasuryAsset
+  receiptCid <- submit opts $
+    exerciseCmd fx.instructionCid AllocatePaymentAndSettle with paymentHoldingCid = fx.cashB
+  pure SettledRfq with
+    parties = p
+    rfqId = fx.rfqId
+    closedRfqCid = fx.closedRfqCid
+    ..

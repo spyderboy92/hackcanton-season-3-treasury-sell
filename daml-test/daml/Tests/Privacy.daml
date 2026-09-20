@@ -1,0 +1,308 @@
+-- | The centrepiece of the suite: what each party CANNOT see.
+--
+-- Every assertion here is an ACS query issued AS the party in question. Daml Script's
+-- 'query' returns exactly the projection the Canton ledger API would serve that party,
+-- so an empty result is not a UI filter, a permissions check in application code, or a
+-- convention -- it is the ledger declining to disclose. This is the claim the whole
+-- project rests on, so it is asserted at every stage of the lifecycle, not once at the
+-- end.
+--
+-- Read the four blind spots we prove for a losing dealer:
+--
+--   * competitor Quote        -- Quote has signatories treasury+dealer and NO observers
+--   * AcceptedTrade           -- bilateral with the winner only
+--   * SettlementInstruction   -- bilateral with the winner only
+--   * SettlementReceipt       -- bilateral + the optional auditor
+--
+-- and the one thing it does see: the shared RFQ going Open -> Closed, which is exactly
+-- the information a losing dealer is entitled to.
+module Tests.Privacy where
+
+import DA.Assert ((===))
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import Daml.Script
+
+import TreasuryRfq.Holding (TokenHolding(..))
+import TreasuryRfq.Quoting (Accept(..), Quote(..), RfqInvitation(..), SubmitQuote(..))
+import TreasuryRfq.Rfq (Close(..), RFQ(..), RfqFill(..))
+import TreasuryRfq.Settlement (AcceptedTrade(..), SettlementInstruction(..), SettlementReceipt(..))
+import TreasuryRfq.Types (RfqStatus(..))
+
+import Tests.Assertions
+import Tests.Fixtures
+
+-- ---------------------------------------------------------------------------
+-- While the auction is live
+-- ---------------------------------------------------------------------------
+
+-- | A dealer's invitation is bilateral: it cannot see anyone else's, so it cannot even
+-- learn how many houses it is bidding against from the invitation itself.
+privacyInvitationsAreBilateral : Script ()
+privacyInvitationsAreBilateral = do
+  fx <- openRfq
+  let p = fx.parties
+  forA_ [p.dealerA, p.dealerB, p.dealerC] $ \d ->
+    void $ assertOnly @RfqInvitation "a dealer sees only its own invitation" d (\i -> i.dealer == d)
+  assertBlind @RfqInvitation "an uninvited stranger sees no invitation" p.stranger
+  assertBlind @RfqInvitation "the auditor is not part of the auction" p.auditor
+  assertBlind @RfqInvitation "the registry issues assets, it does not see the auction" p.registry
+
+-- | Prices never reach a competitor. Each dealer sees exactly one Quote -- its own, at
+-- its own price -- while the treasury sees all three.
+privacyQuotesAreInvisibleToCompetitors : Script ()
+privacyQuotesAreInvisibleToCompetitors = do
+  fx <- quotedRfq
+  let p = fx.parties
+
+  (_, qa) <- assertOnly @Quote "Dealer A sees only its own quote" p.dealerA (\q -> q.dealer == p.dealerA)
+  qa.price === priceDealerA
+  (_, qb) <- assertOnly @Quote "Dealer B sees only its own quote" p.dealerB (\q -> q.dealer == p.dealerB)
+  qb.price === priceDealerB
+  (_, qc) <- assertOnly @Quote "Dealer C sees only its own quote" p.dealerC (\q -> q.dealer == p.dealerC)
+  qc.price === priceDealerC
+
+  -- The treasury is the only party with the book.
+  void $ assertVisible @Quote "the treasury sees all three quotes" p.treasury 3
+
+  -- Nobody outside the bilateral pairs sees a price at all.
+  assertAllBlind @Quote "no price leaks outside the treasury/dealer pair"
+    [p.auditor, p.registry, p.stranger]
+
+-- | The single-fill fix must not cost anything in disclosure.
+--
+-- 'TreasuryRfq.Rfq.RfqFill' is the contract that stops the treasury filling one RFQ
+-- twice. It is signed by the treasury and has NO observers, which is the entire reason
+-- it exists as a separate template instead of a status check on the RFQ: every invited
+-- dealer is a stakeholder on the RFQ, so fetching the RFQ inside @Quote.Accept@ would
+-- have put a node of the acceptance subtree in front of the losing dealers -- the exact
+-- leak this project exists to prevent.
+--
+-- So the fill right must be invisible to everyone but the treasury, at every point in
+-- the lifecycle:
+--
+--   * when it is created -- in the SAME transaction as the RFQ and the three
+--     invitations, which the dealers do see, so this is a real test of per-node
+--     informee projection and not merely of a separate transaction;
+--   * while it sits unspent during the auction;
+--   * after it is consumed by Accept, when the winner witnesses the archive as a
+--     consequence of its own Quote and the losers witness nothing at all.
+--
+-- If this script ever fails, the single-fill fix has traded correctness for a leak and
+-- should be reverted.
+privacyFillRightIsInvisibleToDealers : Script ()
+privacyFillRightIsInvisibleToDealers = do
+  -- ONE ledger, one party set, three points in ITS OWN timeline. An earlier version of
+  -- this script called openRfq, quotedRfq and acceptedRfq in turn; each of those
+  -- allocates a fresh party set and builds an independent chain, so it asserted against
+  -- three unrelated ledgers while the prose claimed continuity. The assertions held, but
+  -- they did not demonstrate what they said. The stages are threaded by hand here so
+  -- "still invisible" and "and gone" refer to the same fill right throughout.
+  fx <- openRfq
+  let p = fx.parties
+      outsiders = [p.dealerA, p.dealerB, p.dealerC, p.auditor, p.registry, p.stranger]
+
+  -- Created alongside the RFQ and the invitations; only the treasury has it.
+  (fillCid, fill) <- assertOnly @RfqFill "the treasury holds its own fill right" p.treasury
+    (\f -> f.rfqId == demoRfqId && f.treasury == p.treasury)
+  assertAllBlind @RfqFill "the fill right must not be disclosed when the RFQ opens" outsiders
+
+  -- Still invisible once THESE dealers have quoted against THIS RFQ.
+  _ <- submit p.dealerA $
+    exerciseCmd fx.invitationA SubmitQuote with price = priceDealerA, expiry = None
+  quoteB <- submit p.dealerB $
+    exerciseCmd fx.invitationB SubmitQuote with price = priceDealerB, expiry = None
+  _ <- submit p.dealerC $
+    exerciseCmd fx.invitationC SubmitQuote with price = priceDealerC, expiry = None
+  (stillThere, _) <- assertOnly @RfqFill "still exactly one, still the treasury's" p.treasury
+    (\f -> f.rfqId == demoRfqId)
+  stillThere === fillCid
+  fill.treasury === p.treasury
+  assertAllBlind @RfqFill "the fill right must not be disclosed during the auction" outsiders
+
+  -- And gone -- for everyone -- once THAT right has been spent by Accept. Accept and
+  -- Close as siblings, the submission shape the whole model is built around.
+  _ <- submit p.treasury $
+    liftA2 (,) (exerciseCmd quoteB Accept with fillCid) (exerciseCmd fx.rfqCid Close)
+  assertBlind @RfqFill "the fill right is consumed by Accept" p.treasury
+  assertAllBlind @RfqFill "no dealer ever sees a fill right, spent or unspent" outsiders
+
+  -- The losing dealers' end-state ACS is unchanged by the fix: still just the closed
+  -- RFQ and their own quote (plus their own cash, asserted in privacyLosingDealerFinalAcs).
+  forA_ [p.dealerA, p.dealerC] $ \loser -> do
+    (_, rfq) <- assertOnly @RFQ "a loser still sees only the closed RFQ" loser
+      (\r -> r.rfqId == demoRfqId)
+    rfq.status === Closed
+    void $ assertOnly @Quote "a loser still sees only its own quote" loser (\qt -> qt.dealer == loser)
+  -- The winner's quote is gone, consumed by the accept it co-signed -- so no party on
+  -- this ledger holds a live Quote for this rfqId any more.
+  assertBlind @Quote "the winner's quote was consumed by the accept" p.dealerB
+
+-- ---------------------------------------------------------------------------
+-- The moment of truth: accept + close as siblings
+-- ---------------------------------------------------------------------------
+
+-- | THE test.
+--
+-- Immediately after the treasury submits @Quote.Accept@ and @RFQ.Close@ as two sibling
+-- commands in one transaction, the losing dealers observe that the auction closed and
+-- absolutely nothing about who won or at what price.
+--
+-- Had Close been implemented to take the winning quote (or had Accept been nested
+-- inside the Close subtree) the AcceptedTrade below would be a consequence of a node
+-- the losing dealers are stakeholders on, and this script would fail. See the comment
+-- on 'Tests.Fixtures.acceptedRfq' for the construction.
+privacyLosingDealerBlindAfterAccept : Script ()
+privacyLosingDealerBlindAfterAccept = do
+  fx <- acceptedRfq
+  let p = fx.parties
+
+  forA_ (losingDealers p) $ \loser -> do
+    -- CAN see: the shared RFQ, now Closed. This is the whole of its entitlement.
+    (_, rfq) <- assertOnly @RFQ "a losing dealer learns the auction closed" loser
+      (\r -> r.rfqId == demoRfqId)
+    rfq.status === Closed
+
+    -- CAN see: its own quote, still live, still bilateral.
+    void $ assertOnly @Quote "a losing dealer still sees its own quote" loser
+      (\q -> q.dealer == loser)
+
+    -- CANNOT see: the winner's trade. This is the leak the sibling-command rule exists
+    -- to prevent.
+    assertBlind @AcceptedTrade "a losing dealer must not see the accepted trade" loser
+
+  -- Dealer A must not see Dealer C's quote, nor vice versa, nor either see Dealer B's.
+  -- The count assertion above already pins this, but state it as its own claim:
+  quotesSeenByA <- query @Quote p.dealerA
+  forA_ quotesSeenByA $ \(_, q) ->
+    assertMsg
+      ("Dealer A can read a competitor's quote: " <> show q)
+      (q.dealer == p.dealerA)
+  quotesSeenByC <- query @Quote p.dealerC
+  forA_ quotesSeenByC $ \(_, q) ->
+    assertMsg
+      ("Dealer C can read a competitor's quote: " <> show q)
+      (q.dealer == p.dealerC)
+
+  -- The winner sees its own trade, and still no competitor's quote.
+  (_, trade) <- assertOnly @AcceptedTrade "the winner sees its own trade" p.dealerB
+    (\t -> t.dealer == p.dealerB)
+  trade.price === priceDealerB
+  assertBlind @Quote "the winner sees no competitor quote either (its own was consumed by Accept)" p.dealerB
+
+  -- The single-fill right that Accept consumed in this very transaction is invisible to
+  -- everyone, including the winner whose Quote node the archive hangs under.
+  assertAllBlind @RfqFill "the consumed fill right leaks to nobody"
+    [p.dealerA, p.dealerB, p.dealerC, p.auditor, p.registry, p.stranger]
+
+  -- Outsiders see nothing new.
+  assertAllBlind @AcceptedTrade "outsiders see no trade" [p.auditor, p.registry, p.stranger]
+
+-- ---------------------------------------------------------------------------
+-- Settlement
+-- ---------------------------------------------------------------------------
+
+-- | The half-settled instruction is bilateral. Not even the named auditor sees it --
+-- the auditor is a field on the instruction, an observer only on the receipt.
+privacySettlementInstructionIsBilateral : Script ()
+privacySettlementInstructionIsBilateral = do
+  fx <- allocatedRfq
+  let p = fx.parties
+
+  void $ assertOnly @SettlementInstruction "the treasury sees the instruction it created" p.treasury
+    (\i -> i.rfqId == demoRfqId)
+  void $ assertOnly @SettlementInstruction "the winner sees the instruction" p.dealerB
+    (\i -> i.rfqId == demoRfqId)
+
+  assertAllBlind @SettlementInstruction "no losing dealer sees the settlement instruction"
+    (losingDealers p)
+  assertBlind @SettlementInstruction "the auditor is named on it but is not a stakeholder" p.auditor
+  assertBlind @SettlementInstruction "a stranger sees nothing" p.stranger
+
+-- | The receipt reaches treasury, winner and auditor -- and nobody else.
+privacyReceiptDisclosure : Script ()
+privacyReceiptDisclosure = do
+  fx <- settledRfq
+  let p = fx.parties
+
+  void $ assertOnly @SettlementReceipt "the treasury has its receipt" p.treasury (\r -> r.rfqId == demoRfqId)
+  void $ assertOnly @SettlementReceipt "the winner has its receipt" p.dealerB (\r -> r.dealer == p.dealerB)
+
+  assertAllBlind @SettlementReceipt "a losing dealer never learns the trade settled"
+    (losingDealers p)
+  assertBlind @SettlementReceipt "the registry moved the tokens but is not on the receipt" p.registry
+  assertBlind @SettlementReceipt "a stranger sees nothing" p.stranger
+
+-- | The auditor's window is exactly one contract wide.
+--
+-- It is an observer on SettlementReceipt and on nothing else in the model: no RFQ, no
+-- invitation, no quote (winning or losing), no accepted trade, no settlement
+-- instruction, no holding. It can attest that a trade settled on those terms and can
+-- reconstruct nothing about the auction that produced it.
+privacyAuditorSeesOnlyTheReceipt : Script ()
+privacyAuditorSeesOnlyTheReceipt = do
+  fx <- settledRfq
+  let p = fx.parties
+
+  (_, receipt) <- assertOnly @SettlementReceipt "the auditor sees the receipt" p.auditor
+    (\r -> r.rfqId == demoRfqId)
+  receipt.auditor === Some p.auditor
+  receipt.paymentAmount === winningPayment
+
+  assertBlind @RFQ "the auditor must not see the RFQ" p.auditor
+  assertBlind @RfqFill "the auditor must not see the fill right" p.auditor
+  assertBlind @RfqInvitation "the auditor must not see an invitation" p.auditor
+  assertBlind @Quote "the auditor must not see a quote" p.auditor
+  assertBlind @AcceptedTrade "the auditor must not see the accepted trade" p.auditor
+  assertBlind @SettlementInstruction "the auditor must not see the settlement instruction" p.auditor
+  assertBlind @TokenHolding "the auditor must not see any holding" p.auditor
+
+-- | The control group: a party that exists on the ledger but was never invited,
+-- never named and never transacted with sees the empty set, at every stage.
+privacyStrangerSeesNothing : Script ()
+privacyStrangerSeesNothing = do
+  fx <- settledRfq
+  let s = fx.parties.stranger
+  assertBlind @RFQ "stranger: RFQ" s
+  assertBlind @RfqFill "stranger: fill right" s
+  assertBlind @RfqInvitation "stranger: invitation" s
+  assertBlind @Quote "stranger: quote" s
+  assertBlind @AcceptedTrade "stranger: accepted trade" s
+  assertBlind @SettlementInstruction "stranger: settlement instruction" s
+  assertBlind @SettlementReceipt "stranger: receipt" s
+  assertBlind @TokenHolding "stranger: holding" s
+
+-- | Holdings are private to issuer and owner: settlement moves 10 cETH and 30,400 USD
+-- without either leg becoming visible to a losing dealer or to the auditor.
+privacyHoldingsAreNotBroadcast : Script ()
+privacyHoldingsAreNotBroadcast = do
+  fx <- settledRfq
+  let p = fx.parties
+
+  forA_ (losingDealers p) $ \loser -> do
+    (_, cash) <- assertOnly @TokenHolding "a losing dealer sees only its untouched cash" loser
+      (\h -> h.owner == loser)
+    cash.amount === dealerCashBalance
+    cash.symbol === demoCurrency
+
+  assertBlind @TokenHolding "the auditor sees no holding" p.auditor
+  assertBlind @TokenHolding "a stranger sees no holding" p.stranger
+
+-- | A full sweep of the losing dealer's ACS at the end of the workflow, as one script,
+-- so the regression is caught wherever a future change leaks it.
+privacyLosingDealerFinalAcs : Script ()
+privacyLosingDealerFinalAcs = do
+  fx <- settledRfq
+  let p = fx.parties
+
+  forA_ (losingDealers p) $ \loser -> do
+    -- Exactly four contracts, and we name every one of them.
+    (_, rfq) <- assertOnly @RFQ "final ACS: the closed RFQ" loser (\r -> r.rfqId == demoRfqId)
+    rfq.status === Closed
+    void $ assertOnly @Quote "final ACS: its own, unaccepted quote" loser (\q -> q.dealer == loser)
+    void $ assertOnly @TokenHolding "final ACS: its own cash" loser (\h -> h.owner == loser)
+    assertBlind @RfqInvitation "final ACS: no invitation (consumed when it quoted)" loser
+    assertBlind @AcceptedTrade "final ACS: no accepted trade" loser
+    assertBlind @SettlementInstruction "final ACS: no settlement instruction" loser
+    assertBlind @SettlementReceipt "final ACS: no receipt" loser
+    assertBlind @RfqFill "final ACS: no fill right" loser

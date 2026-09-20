@@ -1,182 +1,134 @@
 # Private Treasury RFQ
 
-HackCanton Season 3 app: a corporate treasury requests quotes from multiple dealers on Canton, while each dealer sees only its own price.
+A corporate treasury requests quotes from several dealers on Canton. Each dealer sees only its own price — enforced by the ledger, not the UI.
 
 ## What an RFQ is
 
-**RFQ** means Request for Quote. A buyer or seller publishes a trade they want done — asset, side (buy or sell), and size — and asks selected dealers to bid. Each dealer replies with a private price. The requester compares the quotes, picks one, and that pair settles. Competitors never see each other’s prices.
-
-This is how corporate treasuries and institutional OTC desks trade. It is not an exchange order book and not an AMM.
-
-Example demo flow:
-
-1. Treasury posts **Sell 10 cETH**
-2. Dealer A quotes `$3,020`, Dealer B `$3,040`, Dealer C `$3,010`
-3. Treasury sees all three and accepts B (best bid on a sell)
-4. Dealer A still cannot see B’s or C’s price
-5. Treasury and Dealer B settle; an optional auditor sees only the final receipt
+RFQ means Request for Quote. A treasury publishes the trade it wants done — asset, side, size — invites selected dealers to price it privately, compares the quotes, picks one, and that pair settles. Demo scenario: the treasury sells 10 cETH for USD. Dealer A quotes 3020, Dealer B 3040, Dealer C 3010. Best bid on a sell is B, so the treasury takes 3040 (30,400.00 USD). A and C learn the RFQ closed and nothing else — not the winner, not the winning price.
 
 ## Why Canton
 
-On a public chain, every dealer quote is visible. On Canton, the treasury coordinates one RFQ while each quote is a **bilateral contract**.
+On a public chain every quote is visible to every competitor. Here the RFQ is one shared contract, but each quote is a bilateral contract signed only by the treasury and that dealer. Privacy comes from Daml signatories and observers, so a competitor's price is not in the data the ledger will serve you — there is nothing for the frontend to hide.
 
-> Canton lets multiple institutions coordinate on the same transaction workflow while each party sees only the data it is entitled to see.
+## Quickstart
 
-Privacy comes from Daml signatories and observers on the ledger — not from filtering in the frontend.
+```bash
+git clone <repo> && cd hackcanton-season-3-treasury-sell
+docker compose up               # builds the DAR, starts a Canton sandbox, seeds the demo, serves the UI
+                                # -d detached; logs -f; down (-v wipes ledger state)
+docker compose run --rm tests   # the 59-script Daml suite
+```
 
-## High-level architecture
+| URL / port | What |
+| --- | --- |
+| http://localhost:3000 | the app, wired to the live ledger |
+| localhost:6864 | Canton JSON Ledger API v2 |
+| localhost:6865 | Canton gRPC Ledger API |
 
-Keep the stack thin. The ledger is the source of truth for RFQ, quote, trade, and settlement state.
+<details>
+<summary>Native path (no Docker)</summary>
+
+JDK 17+, Node 24. Without the explicit `dpm install 3.5.1`, `dpm build` fails with `target dpm-sdk version not installed`.
+
+```bash
+curl https://get.digitalasset.com/install/install.sh | sh
+export PATH="$HOME/.dpm/bin:$PATH"   # the installer does not do this for you
+dpm install 3.5.1                    # installer pulls latest; this repo pins 3.5.1
+dpm build --all && dpm test --package-root daml-test
+dpm sandbox                          # terminal 1; then, in terminal 2:
+dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
+  --script-name Demo.Bootstrap:bootstrap \
+  --ledger-host 127.0.0.1 --ledger-port 6865 --upload-dar true -w
+cd frontend && npm install && NEXT_PUBLIC_LEDGER=canton npm run dev
+```
+
+With no sandbox at all the app still runs: `NEXT_PUBLIC_LEDGER` defaults to `mock` and serves an in-memory fixture.
+</details>
+
+## Architecture
 
 ```mermaid
 flowchart LR
-  UI["Next.js UI"] --> API["Next.js route handlers"]
-  API --> JSON["Canton JSON Ledger API"]
-  JSON --> Sandbox["dpm sandbox / participant"]
-  Sandbox --> DAR["treasury-rfq.dar"]
+  UI["Next.js UI"] --> API["Next.js route handlers<br/>act as the selected party"] --> JSON["Canton JSON Ledger API"] --> SBX["Canton sandbox"] --> DAR["treasury-rfq.dar"]
 ```
 
-| Layer | Role |
-| --- | --- |
-| Frontend | Role switcher (demo login), treasury / dealer / audit views |
-| App API | Thin command/query proxy; acts as the selected party |
-| Canton | Validates authorization and distributes contract data need-to-know |
-| Daml DAR | RFQ lifecycle, bilateral quotes, settle, audit receipt |
+## Contract model
 
-No Kafka, Redis, PQS, or Kubernetes in the hackathon MVP.
+```mermaid
+flowchart TB
+  subgraph shared["Shared — all invited dealers observe"]
+    RFQ["RFQ<br/>no prices"] --> Inv["RfqInvitation<br/>one per dealer"]
+  end
+  subgraph bilateral["Bilateral — treasury + one dealer"]
+    Inv -->|SubmitQuote| Q["Quote<br/>carries the price"]
+  end
+  subgraph post["Post-trade"]
+    AT["AcceptedTrade"] -->|"AllocateAsset (seller)"| SI["SettlementInstruction"] -->|"AllocatePaymentAndSettle (buyer)"| SR["SettlementReceipt<br/>auditor observes"]
+  end
+  Q -->|Accept| AT
+  Fill["RfqFill<br/>treasury only, single use"] -. consumed by Accept .-> AT
+```
+
+| Template | Signatory | Observers | Purpose |
+| --- | --- | --- | --- |
+| `RFQ` | treasury | invited dealers | Shared market request. `Close`/`Cancel` take no arguments, and are submitted with the fill right archived as a sibling command. |
+| `RfqFill` | treasury | none | Single-use right to fill. Stops a double fill without leaking. |
+| `RfqInvitation` | treasury | that dealer | Private factory for `SubmitQuote`. |
+| `Quote` | treasury + dealer | none | The price. Bilateral. `Accept`, `Revise`, `Withdraw`. |
+| `AcceptedTrade` | treasury + dealer | none | Binding terms. `AllocateAsset`. |
+| `TokenHolding` | issuer | owner | Mock CIP-56-shaped holding (cETH / USD / CBTC). |
+| `SettlementInstruction` | treasury + dealer | none | Half-settled DvP: asset leg allocated, cash leg outstanding. |
+| `SettlementReceipt` | treasury + dealer | optional auditor | Immutable post-trade evidence. |
+
+## Privacy model
+
+| Party | Sees |
+| --- | --- |
+| Treasury | Everything: RFQ, all invitations, all quotes, trade, receipt |
+| Losing dealer | Closed RFQ, own quote, own cash. Nothing else. |
+| Winning dealer | RFQ, own quote, `AcceptedTrade`, receipt |
+| Auditor | `SettlementReceipt` only — no RFQ, no quote, no trade |
+| Stranger | Nothing |
+
+Proven by negative assertions in the test suite and re-proven against a live participant with wildcard ACS queries (no template filter, so nothing can be hidden by the query shape).
 
 ## Workflow
 
 ```mermaid
 sequenceDiagram
   participant T as Treasury
-  participant A as DealerA
-  participant B as DealerB
-  participant C as DealerC
+  participant A as Dealer A
+  participant B as Dealer B
   participant L as Ledger
-  participant Aud as Auditor
-
-  T->>L: Create RFQ + invitations
-  L-->>A: RFQ + invitation A
-  L-->>B: RFQ + invitation B
-  L-->>C: RFQ + invitation C
+  participant Au as Auditor
+  T->>L: Create RFQ + invitations + RfqFill
+  L-->>A: RFQ + own invitation (same for B)
   A->>L: SubmitQuote 3020
   B->>L: SubmitQuote 3040
-  C->>L: SubmitQuote 3010
-  Note over A,C: Each dealer sees only its own Quote
-  L-->>T: Quotes A, B, C
-  T->>L: Accept B + Close RFQ
+  Note over A,B: neither sees the other's price
+  L-->>T: Quote A, Quote B
+  T->>L: Accept B + Close RFQ (sibling commands)
   L-->>B: AcceptedTrade
-  L-->>A: RFQ Closed only
-  L-->>C: RFQ Closed only
-  T->>L: Settle mock cETH vs USD
-  L-->>Aud: SettlementReceipt
+  L-->>A: RFQ Closed, no price
+  T->>L: AllocateAsset (10 cETH) -> SettlementInstruction
+  B->>L: AllocatePaymentAndSettle (30,400 USD)
+  L-->>Au: SettlementReceipt
 ```
 
-## Contract model
-
-Six templates. The important split: the **RFQ is shared**; each **Quote is bilateral**.
-
-```mermaid
-flowchart TB
-  subgraph shared [Shared market request]
-    RFQ["RFQ\nsignatory: Treasury\nobservers: invited dealers"]
-    InvA["RfqInvitation A"]
-    InvB["RfqInvitation B"]
-    InvC["RfqInvitation C"]
-    RFQ --> InvA
-    RFQ --> InvB
-    RFQ --> InvC
-  end
-  subgraph bilateral [Bilateral only]
-    QA["Quote A\nsignatories: Treasury + DealerA"]
-    QB["Quote B"]
-    QC["Quote C"]
-    InvA --> QA
-    InvB --> QB
-    InvC --> QC
-  end
-  subgraph postTrade [Post-trade]
-    Trade["AcceptedTrade\nTreasury + winning dealer"]
-    Receipt["SettlementReceipt\n+ optional Auditor"]
-    QB --> Trade
-    Trade --> Receipt
-  end
-```
-
-### Templates
-
-| Template | Signatory | Observers | Purpose |
-| --- | --- | --- | --- |
-| `RFQ` | treasury | invited dealers | Shared market request (no prices) |
-| `RfqInvitation` | treasury | that dealer only | Privacy-preserving factory for `SubmitQuote` |
-| `Quote` | treasury + dealer | none | Private bilateral price |
-| `AcceptedTrade` | treasury + dealer | none | Binding accepted terms |
-| `TokenHolding` | issuer | owner | Mock CIP-56-shaped holding (`cETH` / `USD` / `CBTC`) |
-| `SettlementReceipt` | treasury + dealer | optional auditor | Immutable post-trade evidence |
-
-### Privacy-critical design rules
-
-Do **not** put `SubmitQuote` or `Accept` on the shared `RFQ`. All invited dealers observe the RFQ. Choice arguments and nested consequences on that contract are visible to every observer ([Canton privacy model](https://docs.canton.network/appdev/deep-dives/privacy-model)).
-
-- A price on `RFQ.SubmitQuote` would leak to competitors
-- Fetching a `Quote` inside `RFQ.Accept` would **divulge** the winning quote to losing dealers
-- Close the RFQ as a **sibling command** in the same submission as Accept
-- Never pass price, dealer, or quote id into `CloseRFQ`
-- `asset` and `quoteCurrency` are `Text`, not cETH-only enums, so CBTC can be added later without new templates
-
-## Privacy model
-
-| Party | Sees |
-| --- | --- |
-| Treasury | All RFQs, invitations, quotes, accepted trade, receipt |
-| Dealer A (loser) | RFQ + own invitation + own quote; after close, closed RFQ only |
-| Dealer B (winner) | RFQ + own quote + `AcceptedTrade` + receipt |
-| Auditor | `SettlementReceipt` only — not competing pre-trade quotes |
-| Stranger | Nothing |
-
-Frontend renders whatever ACS the acting party can query. Competitor quotes must not be hidden only in the UI.
-
-## Settlement
-
-Happy path: **SELL 10 cETH**. Treasury delivers cETH; dealer pays `price * quantity` USD via mock `TokenHolding` transfers in one transaction.
-
-`TokenHolding` lives in `Settlement.daml` so a later CIP-56 adapter (live [CBTC](https://docs.bitsafe.finance/developers/instrument-id-management) or [cETH](https://www.ceth.network/)) can replace transfers without rewriting RFQ/Quote. Both assets are CIP-56; they differ by registry, not by workflow. Live token integration is optional (P2).
-
-## Track alignment
-
-| Track | How this project maps |
-| --- | --- |
-| Financial Applications | Quote formation, economic choice (best bid/offer), asset flow, accept, settle |
-| RWA & Business Workflows | Create RFQ → receive quotes → update state → accept → settle → audit receipt |
+Settlement is two-step DvP because a single `Settle` is impossible: it would need the counterparty's holding `ContractId`, and neither party is a stakeholder on the other's holding. Each side allocates its own leg; both signed the instruction, so step two moves both legs atomically. Settled positions: treasury 25 → 15 cETH and +30,400.00 USD; winner 0 → 10 cETH and 1,000,000 → 969,600.00 USD; losing dealers untouched.
 
 ## Status
 
-Daml packages are scaffolded on SDK **3.5.1**. Templates exist with the intended signatories and observers. Choices, privacy tests, sandbox API, and UI are still to be implemented (see Linear project tickets).
+| Layer | State |
+| --- | --- |
+| Contract model | 8 templates, 11 business choices, 5 modules, 587 lines. Canton SDK 3.5.1. |
+| Tests | 59 Daml Script tests, all passing. 100% coverage: 8/8 templates, 19/19 choices. |
+| Frontend | Next.js 15 App Router, TypeScript strict, Tailwind v4, 11 routes, 69 source files, zero runtime deps beyond react/react-dom/next. |
+| Live ledger | Full round trip driven through the UI against a running sandbox: quote, accept, allocate, settle. |
 
-## Layout
+> **Run it on your own machine only.** The Canton sandbox serves the Ledger API with
+> no authentication: the acting party is whatever the caller names, so anyone who can
+> reach port 6864 can read any desk and submit as any party. Compose binds every
+> published port to `127.0.0.1` for that reason — do not expose them.
 
-- `daml/` — ledger contracts (`treasury-rfq`)
-- `daml-test/` — Daml Script tests (`treasury-rfq-tests`)
-- `frontend/` — not created yet
-
-## Build
-
-Requires [dpm](https://docs.canton.network/sdks-tools/cli-tools/dpm) and JDK 17+.
-
-```bash
-dpm build --all
-dpm test --package-root daml-test
-```
-
-That test currently only checks that the test package imports the contract types.
-
-## Demo script (target, under 3 minutes)
-
-Once choices and UI land:
-
-1. Split view: Treasury sees three quotes; Dealer A sees only `$3,020`
-2. Treasury accepts Dealer B (`$3,040`, best bid)
-3. Dealer A: RFQ closed, still no winning price
-4. Dealer B: accepted trade visible
-5. Settle mock cETH vs USD; Auditor sees receipt only
+**Known gaps.** The allocated asset is pinned by `ContractId`, not escrowed — the mock holding has no lock, so a seller can spend it between the two steps (settle then aborts cleanly with contract-not-found; real CIP-56 registries provide the lock). The single-use fill right bounds reuse but not minting — the treasury is its only signatory, so it can mint a second one for the same `rfqId`; no ledger-level fix exists, because Canton 3.5.1 does not enforce contract-key uniqueness. `TokenHolding` is a mock; live CIP-56 integration is P2. Settlement requires explicit disclosure of the seller's holding. The Ledger API is unauthenticated, so the stack is loopback-only. See [`AGENTS.md`](AGENTS.md) for the design rationale behind each decision and the full gap list.

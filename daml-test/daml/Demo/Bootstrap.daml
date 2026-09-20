@@ -1,0 +1,59 @@
+-- | Sandbox seeding script -- NOT part of the test suite.
+--
+-- Seeds a live Canton sandbox with the spec section 4 scenario so the frontend has real
+-- data to render, and STOPS before any quote is submitted: the point of the demo is to
+-- drive the quoting, the accept and the settlement from the UI and watch each party's
+-- view of the ledger differ.
+--
+-- What it creates:
+--   * six parties -- Treasury, DealerA, DealerB, DealerC, Auditor, Registry -- allocated
+--     with id hints so the party ids read as @DealerB::1220...@
+--   * holdings issued by Registry: Treasury 25 cETH, each dealer 1,000,000 USD
+--   * one Open RFQ: Treasury SELLS 10 cETH quoted in USD, inviting all three dealers
+--   * one RfqInvitation per dealer, each observed by that dealer alone
+--
+-- What it deliberately does NOT create: any Quote, AcceptedTrade, SettlementInstruction
+-- or SettlementReceipt.
+--
+-- Run it with:
+--
+-- > dpm build --all
+-- > dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
+-- >   --script-name Demo.Bootstrap:bootstrap \
+-- >   --ledger-host 127.0.0.1 --ledger-port 6865 --upload-dar true -w
+--
+-- The party ids are printed at the end, one per line, ready to paste into the frontend
+-- config.
+module Demo.Bootstrap where
+
+import DA.Foldable (forA_)
+import Daml.Script
+
+import Tests.Fixtures
+
+-- | Seed the ledger and print the party ids.
+bootstrap : Script OpenRfq
+bootstrap = do
+  fx <- openRfq
+  let p = fx.parties
+
+  debug "=================================================================="
+  debug "Treasury RFQ demo seeded. Party ids for the frontend config:"
+  forA_
+    [ ("treasury", p.treasury)
+    , ("dealerA", p.dealerA)
+    , ("dealerB", p.dealerB)
+    , ("dealerC", p.dealerC)
+    , ("auditor", p.auditor)
+    , ("registry", p.registry)
+    ]
+    (\(label, party) -> debug (label <> ": " <> show party))
+  debug "------------------------------------------------------------------"
+  debug ("rfqId: " <> fx.rfqId)
+  debug ("asset: " <> demoAsset <> "  currency: " <> demoCurrency)
+  debug ("side: Sell  quantity: " <> show demoQuantity)
+  debug ("quoteDeadline: " <> show fx.quoteDeadline)
+  debug "Three invitations are outstanding; no quote has been submitted."
+  debug "=================================================================="
+
+  pure fx

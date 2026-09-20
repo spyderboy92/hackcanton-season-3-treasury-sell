@@ -1,25 +1,190 @@
+-- | Everything downstream of a won auction: the accepted terms, the two-step DvP
+-- instruction, and the audit receipt.
+--
+-- AcceptedTrade and SettlementInstruction are colocated because they are mutually
+-- recursive at the type level -- AllocateAsset returns a @ContractId SettlementInstruction@
+-- and CancelAllocation returns a @ContractId AcceptedTrade@ (the seller un-allocates and
+-- the trade goes back on the table). Daml has no forward declarations, so the pair cannot
+-- be split across two modules. SettlementReceipt is the terminal state of the same
+-- lifecycle and belongs with them. The asset primitive they move lives in
+-- TreasuryRfq.Holding.
 module TreasuryRfq.Settlement where
 
-import TreasuryRfq.Trade (AcceptedTrade)
+import DA.Optional (optionalToList)
+import TreasuryRfq.Holding (TokenHolding, Transfer(..))
+import TreasuryRfq.Types
 
--- Mock CIP-56-shaped holding. Isolated here so a later CBTC/cETH adapter can replace Transfer without rewriting RFQ/Quote.
-template TokenHolding
+-- Binding bilateral terms after accept. Losing dealers are not stakeholders and never
+-- learn that this contract exists. Linked to the auction by 'rfqId' only.
+--
+-- Which party owes which leg is not stored: it is derived from 'side' through the single
+-- definition in TreasuryRfq.Types, so it cannot drift out of step with the trade terms.
+template AcceptedTrade
   with
-    issuer : Party
-    owner : Party
-    symbol : Text
-    amount : Decimal
+    rfqId : Text
+    treasury : Party
+    dealer : Party
+    asset : Text
+    quoteCurrency : Text
+    side : Side
+    quantity : Decimal
+    price : Decimal
+    acceptedAt : Time
   where
-    signatory issuer
-    observer owner
+    signatory treasury, dealer
 
     ensure
-      amount > 0.0
-        && symbol /= ""
+      rfqId /= ""
+        && quantity > 0.0
+        && price > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && treasury /= dealer
 
--- Immutable evidence for the auditor. Observer is added only here so competing quotes stay invisible.
+    -- Step 1 of the two-step DvP. The seller nominates the holding it will deliver; the
+    -- buyer's cash leg is nominated in step 2 (SettlementInstruction.AllocatePaymentAndSettle),
+    -- because the seller cannot know the ContractId of a holding it is not a stakeholder on.
+    choice AllocateAsset : ContractId SettlementInstruction
+      with
+        assetHoldingCid : ContractId TokenHolding
+        auditor : Optional Party
+      controller sellerOf side treasury dealer
+      do
+        let seller = sellerOf side treasury dealer
+        holding <- fetch assetHoldingCid
+        assertMsg "asset holding must be owned by the seller" (holding.owner == seller)
+        assertMsg "asset holding is the wrong asset" (holding.symbol == asset)
+        assertMsg "asset holding does not cover the traded quantity" (holding.amount >= quantity)
+        create SettlementInstruction with
+          rfqId
+          treasury
+          dealer
+          side
+          asset
+          assetQuantity = quantity
+          quoteCurrency
+          paymentAmount = paymentFor quantity price
+          price
+          acceptedAt
+          assetHoldingCid
+          auditor
+
+-- Half-settled delivery-versus-payment. The seller has committed its asset leg by naming
+-- the holding it will deliver; the buyer's leg is still outstanding.
+--
+-- Why this template exists at all (and why there is no single 'Settle' choice): the
+-- treasury is not a stakeholder on the dealer's cash holding, so it can never know that
+-- ContractId. Each side must therefore allocate its own leg. Both parties are signatories
+-- here, so the second step carries enough authority to move BOTH holdings in one
+-- transaction -- atomic DvP, no free option at the moment of exchange.
+--
+-- Buyer and seller are NOT stored: they are derived from 'side' via TreasuryRfq.Types, so
+-- there is no denormalised copy that could contradict the trade terms.
+--
+-- KNOWN LIMITATION -- the allocated asset is pinned, not escrowed.
+-- 'assetHoldingCid' is a reference to a holding that stays under the seller's control:
+-- this mock TokenHolding has no lock primitive, so the seller can still Transfer or split
+-- that holding after allocating it. If it does, AllocatePaymentAndSettle fails when it
+-- fetches the archived ContractId (a contract-not-found rejection, not a clean assert) and
+-- the buyer must ask the seller to re-allocate. Nothing is lost and no partial settlement
+-- is possible -- the failure aborts the whole transaction -- but the seller does hold an
+-- option to walk away between the two steps. In the real integration the pin is replaced
+-- by a CIP-56 registry lock on the holding, which the registry (not this workflow) owns;
+-- building a lock or an escrow party into the mock would misrepresent where that
+-- responsibility lives.
+template SettlementInstruction
+  with
+    rfqId : Text
+    treasury : Party
+    dealer : Party
+    side : Side
+    asset : Text
+    assetQuantity : Decimal
+    quoteCurrency : Text
+    paymentAmount : Decimal
+    price : Decimal
+    acceptedAt : Time
+    assetHoldingCid : ContractId TokenHolding
+    auditor : Optional Party
+  where
+    signatory treasury, dealer
+
+    ensure
+      rfqId /= ""
+        && assetQuantity > 0.0
+        && paymentAmount > 0.0
+        && price > 0.0
+        && asset /= ""
+        && quoteCurrency /= ""
+        && treasury /= dealer
+        && paymentAmount == assetQuantity * price
+
+    -- The atomic leg. Both transfers happen inside this one transaction, so neither
+    -- party can take delivery without paying.
+    choice AllocatePaymentAndSettle : ContractId SettlementReceipt
+      with
+        paymentHoldingCid : ContractId TokenHolding
+      controller buyerOf side treasury dealer
+      do
+        let buyer = buyerOf side treasury dealer
+            seller = sellerOf side treasury dealer
+
+        payment <- fetch paymentHoldingCid
+        assertMsg "payment holding must be owned by the buyer" (payment.owner == buyer)
+        assertMsg "payment holding is in the wrong currency" (payment.symbol == quoteCurrency)
+        assertMsg "payment holding does not cover paymentAmount" (payment.amount >= paymentAmount)
+
+        -- Authorised because the seller signs this instruction, so the seller's authority
+        -- is present in this exercise even though the buyer is the controller.
+        assetHolding <- fetch assetHoldingCid
+        assertMsg "asset holding must be owned by the seller" (assetHolding.owner == seller)
+        assertMsg "asset holding is the wrong asset" (assetHolding.symbol == asset)
+        assertMsg "asset holding does not cover assetQuantity" (assetHolding.amount >= assetQuantity)
+
+        (_assetToBuyer, _assetChange) <-
+          exercise assetHoldingCid Transfer with newOwner = buyer, transferAmount = assetQuantity
+        (_cashToSeller, _cashChange) <-
+          exercise paymentHoldingCid Transfer with newOwner = seller, transferAmount = paymentAmount
+
+        now <- getTime
+        create SettlementReceipt with
+          rfqId
+          treasury
+          dealer
+          buyer
+          seller
+          asset
+          assetQuantity
+          quoteCurrency
+          paymentAmount
+          price
+          auditor
+          settledAt = now
+
+    -- Un-allocate: the seller withdraws the holding it nominated and the trade goes back
+    -- to its accepted-but-unsettled state, ready to be allocated again against a different
+    -- holding. Without this the instruction would be immortal whenever the buyer never
+    -- pays. Recreating the AcceptedTrade is authorised because both of its signatories
+    -- also sign this instruction.
+    choice CancelAllocation : ContractId AcceptedTrade
+      controller sellerOf side treasury dealer
+      do
+        create AcceptedTrade with
+          rfqId
+          treasury
+          dealer
+          asset
+          quoteCurrency
+          side
+          quantity = assetQuantity
+          price
+          acceptedAt
+
+-- Immutable evidence for the auditor. The auditor is added as an observer only here,
+-- so it sees the outcome of the trade and never a competing quote.
 template SettlementReceipt
   with
+    rfqId : Text
     treasury : Party
     dealer : Party
     buyer : Party
@@ -29,21 +194,19 @@ template SettlementReceipt
     quoteCurrency : Text
     paymentAmount : Decimal
     price : Decimal
-    acceptedTradeCid : ContractId AcceptedTrade
     auditor : Optional Party
     settledAt : Time
   where
     signatory treasury, dealer
-    observer optionalAuditorToList auditor
+    observer optionalToList auditor
 
     ensure
-      assetQuantity > 0.0
+      rfqId /= ""
+        && assetQuantity > 0.0
         && paymentAmount > 0.0
         && price > 0.0
         && asset /= ""
         && quoteCurrency /= ""
         && treasury /= dealer
-
-optionalAuditorToList : Optional Party -> [Party]
-optionalAuditorToList None = []
-optionalAuditorToList (Some p) = [p]
+        && buyer /= seller
+        && paymentAmount == assetQuantity * price

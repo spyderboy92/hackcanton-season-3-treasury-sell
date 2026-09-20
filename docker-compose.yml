@@ -1,0 +1,92 @@
+# One command: `docker compose up`.
+#
+# Builds the DAR, starts a Canton sandbox, seeds the demo scenario, serves the
+# UI against the live ledger. Nothing to install on the host but Docker.
+#
+#   http://localhost:3000   the app, wired to the live ledger
+#   localhost:6864          Canton JSON Ledger API v2
+#   localhost:6865          Canton gRPC Ledger API
+#
+# Every published port is bound to 127.0.0.1: the ledger API is UNAUTHENTICATED,
+# so the stack must not be reachable from off the machine. See the note on the
+# canton service below.
+#
+#   docker compose run --rm tests   the 59-script Daml suite
+#   docker compose down             stop, keep ledger state
+#   docker compose down -v          stop, wipe ledger state
+
+name: treasury-rfq
+
+services:
+  # Toolchain, DAR, sandbox and seed. `healthy` here means the JSON Ledger API
+  # answers AND Demo.Bootstrap has run — see docker/canton-healthcheck.sh.
+  canton:
+    build:
+      context: .
+      dockerfile: Dockerfile.canton
+      target: runtime
+    image: treasury-rfq-canton
+    # Bound to LOOPBACK, deliberately. The sandbox serves the Ledger API with no
+    # authentication at all: the acting party is whatever the caller names, so
+    # anyone who can reach these ports can read any desk's ACS and submit as any
+    # party. That is fine for a demo on one machine and is not a deployment
+    # posture — publishing them on 0.0.0.0 would put the privacy model this
+    # project exists to demonstrate behind nothing whatsoever. Real deployments
+    # put a JWT-validating participant in front; see AGENTS.md section 8.
+    ports:
+      - "127.0.0.1:6864:6864"   # JSON Ledger API v2
+      - "127.0.0.1:6865:6865"   # gRPC Ledger API
+    volumes:
+      - ledger-state:/var/lib/canton
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/canton-healthcheck.sh"]
+      interval: 5s
+      timeout: 5s
+      # Cold start is a JVM boot, a synchronizer bootstrap and a seed script.
+      # start_period keeps those minutes from counting as failures.
+      retries: 5
+      start_period: 300s
+    stop_grace_period: 30s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # NEXT_PUBLIC_* is inlined into the bundle at build time, so these are
+        # build arguments. NEXT_PUBLIC_LEDGER_ENDPOINT is only a label in the
+        # status rail: it names the address a human can actually reach from the
+        # browser's machine, not the compose-internal one.
+        NEXT_PUBLIC_LEDGER: canton
+        NEXT_PUBLIC_LEDGER_ENDPOINT: "localhost:6864 (Canton sandbox in Docker)"
+    image: treasury-rfq-frontend
+    ports:
+      - "127.0.0.1:3000:3000"   # loopback, for the same reason as the ledger ports
+    environment:
+      # Read server-side, inside this container: it must address the Canton
+      # service by its compose hostname. 127.0.0.1 here would be this
+      # container's own loopback and would resolve every party to the fixture.
+      LEDGER_JSON_API: http://canton:6864
+      NEXT_PUBLIC_LEDGER: canton
+      LEDGER_USER_ID: treasury-rfq-ui
+    depends_on:
+      canton:
+        condition: service_healthy
+
+  # `docker compose run --rm tests`. Not part of `up`: the profile keeps it out.
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.canton
+      target: dar
+    image: treasury-rfq-tests
+    profiles: ["tests"]
+    # --all --show-coverage, not a bare `dpm test`. The model is a DATA-DEPENDENCY
+    # of the test package, so without --all the coverage report counts only this
+    # package's own templates -- of which there are none -- and prints
+    # "0 defined / 0 (100.0%)" for every category. The README quotes 8/8 and 19/19;
+    # this is the invocation that produces those numbers. See AGENTS.md section 5.
+    command: ["dpm", "test", "--package-root", "daml-test", "--all", "--show-coverage"]
+
+volumes:
+  # Named, so `docker compose down` keeps the ledger and `down -v` wipes it.
+  ledger-state:

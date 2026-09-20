@@ -1,0 +1,107 @@
+{-# LANGUAGE AllowAmbiguousTypes #-}
+
+-- | Disclosure assertions, factored out so every privacy claim in this suite reads
+-- as one line and fails with a message that names the party, the template and the
+-- counts involved.
+--
+-- The important helper here is 'assertBlind': proving that a party CANNOT see a
+-- contract is the whole point of the suite, and it is expressed as an ACS query
+-- issued AS that party. Daml Script's 'query' returns exactly what the ledger API
+-- would hand that party, so an empty result is ledger-enforced privacy, not a UI
+-- filter.
+module Tests.Assertions where
+
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import Daml.Script
+
+-- | Query the ACS as @p@ and assert it holds exactly @expected@ contracts of @t@.
+-- Returns them so the caller can go on to assert on their payloads.
+assertVisible
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> Party -> Int -> Script [(ContractId t, t)]
+assertVisible label p expected = do
+  cs <- query @t p
+  assertMsg
+    ( label <> ": party " <> show p <> " should see " <> show expected
+        <> " contract(s), but sees " <> show (length cs) <> ": " <> show (map snd cs)
+    )
+    (length cs == expected)
+  pure cs
+
+-- | The negative assertion this project exists to make: @p@ sees no @t@ at all.
+assertBlind
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> Party -> Script ()
+assertBlind label p = void (assertVisible @t label p 0)
+
+-- | Same, for a whole set of parties, so a leak to any one of them names that one.
+assertAllBlind
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> [Party] -> Script ()
+assertAllBlind label ps = forA_ ps (assertBlind @t label)
+
+-- | Query as @p@ and assert the single visible @t@ satisfies a predicate.
+assertOnly
+  : forall t
+  . (Template t, HasEnsure t, Show t)
+  => Text -> Party -> (t -> Bool) -> Script (ContractId t, t)
+assertOnly label p predicate = do
+  cs <- assertVisible @t label p 1
+  case cs of
+    [(cid, c)] -> do
+      assertMsg
+        (label <> ": the one contract " <> show p <> " sees is the wrong one: " <> show c)
+        (predicate c)
+      pure (cid, c)
+    _ -> abort (label <> ": unreachable, assertVisible already pinned the count")
+
+-- ---------------------------------------------------------------------------
+-- Rejection assertions
+-- ---------------------------------------------------------------------------
+
+-- | The submission must be rejected, and rejected FOR AUTHORIZATION.
+--
+-- 'submitMustFail' passes on any rejection at all, so a script named for a controller
+-- check stays green when the controller breaks but an 'ensure' clause or a stale
+-- ContractId happens to reject the submission anyway. That is exactly the case where the
+-- test is supposed to fail. 'trySubmit' hands back the 'SubmitError', so where the
+-- authorization is the POINT of the test, match it.
+--
+-- Not a blanket replacement for 'submitMustFail': where the claim really is "the model
+-- rejects this", any rejection is the right assertion and 'submitMustFail' says so more
+-- plainly. Use this one where the script's name says @Cannot@ about a PARTY.
+expectAuthorizationError : Text -> Party -> Commands a -> Script ()
+expectAuthorizationError label p cmds = do
+  outcome <- trySubmit p cmds
+  case outcome of
+    Left (AuthorizationError _) -> pure ()
+    Left other ->
+      assertFail
+        ( label <> ": the submission was rejected, but NOT for authorization -- "
+            <> show other <> ". The controller check this asserts may no longer be doing the work."
+        )
+    Right _ -> assertFail (label <> ": the submission SUCCEEDED; it must be rejected.")
+
+
+-- | The submission must be rejected because the acting party cannot SEE the contract.
+--
+-- The complement of 'expectAuthorizationError', and worth distinguishing: a party that
+-- is not a stakeholder cannot address the contract at all, so the ledger refuses before
+-- any controller check is reached. That is a privacy property, not an authorization one,
+-- and several scripts here assert it while being named for the other. Matching the error
+-- is what keeps the two from being confused.
+expectNotVisible : Text -> Party -> Commands a -> Script ()
+expectNotVisible label p cmds = do
+  outcome <- trySubmit p cmds
+  case outcome of
+    Left (ContractNotFound _ _) -> pure ()
+    Left other ->
+      assertFail
+        ( label <> ": the submission was rejected, but the contract was VISIBLE to the party -- "
+            <> show other <> ". Expected the ledger to refuse on disclosure."
+        )
+    Right _ -> assertFail (label <> ": the submission SUCCEEDED; it must be rejected.")

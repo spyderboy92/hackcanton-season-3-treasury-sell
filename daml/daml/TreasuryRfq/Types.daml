@@ -1,9 +1,53 @@
+-- | Shared vocabulary for the RFQ workflow: the enums every template stores and
+-- the derivations that must be identical everywhere they are computed.
+--
+-- Nothing in here is a template. It is the one module every other module may
+-- import, which is what keeps the package free of import cycles.
 module TreasuryRfq.Types where
 
 -- Buy vs Sell is data so one RFQ template covers both treasury sides.
 data Side = Buy | Sell
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
 
 -- Closed and Cancelled are distinct so dealers can learn the RFQ ended without learning the winning price.
 data RfqStatus = Open | Closed | Cancelled
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
+
+-- | Who delivers the asset and who pays for it, derived from the treasury's side.
+--
+-- side == Sell => the treasury sells the asset, so seller = treasury, buyer = dealer.
+-- side == Buy  => the mirror image.
+--
+-- Defined exactly once so AcceptedTrade, SettlementInstruction and SettlementReceipt
+-- can never disagree about which leg each party owes.
+tradeParties : Side -> Party -> Party -> (Party, Party)  -- ^ returns (buyer, seller)
+tradeParties Sell treasury dealer = (dealer, treasury)
+tradeParties Buy treasury dealer = (treasury, dealer)
+
+-- | The party that receives the asset and pays 'paymentAmount'.
+buyerOf : Side -> Party -> Party -> Party
+buyerOf side treasury dealer = fst (tradeParties side treasury dealer)
+
+-- | The party that delivers the asset and receives 'paymentAmount'.
+sellerOf : Side -> Party -> Party -> Party
+sellerOf side treasury dealer = snd (tradeParties side treasury dealer)
+
+-- | Cash owed for a trade. Single definition so the value asserted at accept time
+-- is bit-for-bit the value settled (Decimal '*' rounds, so recomputing matters).
+paymentFor : Decimal -> Decimal -> Decimal
+paymentFor quantity price = quantity * price
+
+-- | 'None' means "no deadline"; a deadline that is set must not already have passed.
+-- Ledger time, not wall-clock time, is what every participant agrees on.
+assertNotPast : Text -> Optional Time -> Update ()
+assertNotPast _ None = pure ()
+assertNotPast label (Some deadline) = do
+  now <- getTime
+  assertMsg (label <> " has passed") (now <= deadline)
+
+-- | Mirror of 'assertNotPast' for a moment that must still lie ahead when it is set.
+assertInFuture : Text -> Optional Time -> Update ()
+assertInFuture _ None = pure ()
+assertInFuture label (Some moment) = do
+  now <- getTime
+  assertMsg (label <> " must be in the future") (moment > now)

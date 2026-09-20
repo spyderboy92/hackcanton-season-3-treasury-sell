@@ -1,0 +1,259 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────────────────────────────
+   Treasury RFQ — design tokens
+
+   Canvas: cool blue-black. Structure comes from 1px hairlines, never shadow.
+   Accent: brass. One hue, used only for focus, selection and the best price.
+   Semantic colour is rationed: green means economically good, red means a
+   destructive command. Everything else is greyscale.
+   ────────────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --canvas: #0a0c10;
+  --sunken: #07080b;
+  --surface: #0e1116;
+  --raised: #141922;
+  --line: #1b2029;
+  --line-hi: #2b3341;
+  --line-quiet: #12161d;
+
+  --ink: #e9edf3;
+  --ink-2: #97a1b1;
+  --ink-3: #5f6a7a;
+  --ink-4: #3b4351;
+
+  --accent: #c8a45c;
+  --accent-hi: #e3c684;
+  --accent-line: #6a5527;
+  --accent-wash: rgb(200 164 92 / 0.09);
+  --accent-ink: #14110a;
+
+  --pos: #5cb08c;
+  --pos-wash: rgb(92 176 140 / 0.11);
+  --neg: #d4685a;
+  --neg-wash: rgb(212 104 90 / 0.11);
+
+  --sealed: repeating-linear-gradient(
+    -45deg,
+    transparent 0 5px,
+    rgb(151 161 177 / 0.10) 5px 6px
+  );
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #f0f1f3;
+  --sunken: #e4e6ea;
+  --surface: #ffffff;
+  --raised: #f6f7f9;
+  --line: #d9dce2;
+  --line-hi: #b6bcc6;
+  --line-quiet: #e8eaee;
+
+  --ink: #0d1117;
+  --ink-2: #4e5766;
+  --ink-3: #78818f;
+  --ink-4: #a6adb8;
+
+  --accent: #8b5e12;
+  --accent-hi: #6e4909;
+  --accent-line: #cfa851;
+  --accent-wash: rgb(139 94 18 / 0.08);
+  --accent-ink: #fffaf0;
+
+  --pos: #1c7a56;
+  --pos-wash: rgb(28 122 86 / 0.09);
+  --neg: #ab3527;
+  --neg-wash: rgb(171 53 39 / 0.09);
+
+  --sealed: repeating-linear-gradient(
+    -45deg,
+    transparent 0 5px,
+    rgb(78 87 102 / 0.12) 5px 6px
+  );
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-sunken: var(--sunken);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-hi: var(--line-hi);
+  --color-line-quiet: var(--line-quiet);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-accent: var(--accent);
+  --color-accent-hi: var(--accent-hi);
+  --color-accent-line: var(--accent-line);
+  --color-accent-wash: var(--accent-wash);
+  --color-accent-ink: var(--accent-ink);
+  --color-pos: var(--pos);
+  --color-pos-wash: var(--pos-wash);
+  --color-neg: var(--neg);
+  --color-neg-wash: var(--neg-wash);
+
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
+
+  /* Dense scale. Everything is small; hierarchy comes from weight and colour. */
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 0.875rem;
+  --text-mini: 0.6875rem;
+  --text-mini--line-height: 1rem;
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1.0625rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.1875rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.1875rem;
+  --text-xl--line-height: 1.5rem;
+  --text-2xl: 1.5rem;
+  --text-2xl--line-height: 1.75rem;
+  --text-3xl: 2rem;
+  --text-3xl--line-height: 2.125rem;
+  --text-4xl: 2.75rem;
+  --text-4xl--line-height: 2.75rem;
+
+  --radius-xs: 1px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  html {
+    background: var(--canvas);
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    letter-spacing: -0.004em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Prices, sizes and party ids all line up. */
+  .num,
+  code,
+  kbd,
+  samp {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "zero" 1;
+    letter-spacing: -0.01em;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: var(--accent-ink);
+  }
+
+  :focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  input,
+  button,
+  select {
+    font: inherit;
+    letter-spacing: inherit;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    appearance: none;
+    margin: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-hi);
+    border-radius: 0;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-4);
+  }
+}
+
+@layer utilities {
+  /* Field labels: small, spaced, sentence case. Never shouted. */
+  .label {
+    font-size: var(--text-micro);
+    line-height: 1rem;
+    letter-spacing: 0.06em;
+    color: var(--ink-3);
+  }
+
+  /* Redacted cell: something exists here that this party is not on. */
+  .sealed {
+    background-image: var(--sealed);
+  }
+
+  .rule-t {
+    border-top: 1px solid var(--line);
+  }
+  .rule-b {
+    border-bottom: 1px solid var(--line);
+  }
+
+  @keyframes mark {
+    from {
+      background-color: var(--accent-wash);
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    to {
+      background-color: transparent;
+      box-shadow: inset 2px 0 0 transparent;
+    }
+  }
+
+  /* A quote landing should register, not perform. */
+  .mark-in {
+    animation: mark 1100ms ease-out both;
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.35;
+    }
+  }
+
+  .breathe {
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mark-in,
+    .breathe {
+      animation: none;
+    }
+  }
+}
