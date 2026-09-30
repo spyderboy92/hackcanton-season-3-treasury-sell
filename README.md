@@ -25,6 +25,10 @@ docker compose run --rm tests   # the 59-script Daml suite
 | localhost:6864 | Canton JSON Ledger API v2 |
 | localhost:6865 | Canton gRPC Ledger API |
 
+**Try the happy path.** From the home page, follow
+[`docs/HAPPY-PATH.md`](docs/HAPPY-PATH.md) — split view or desk-by-desk accept
+→ allocate → settle, plus the privacy checks.
+
 <details>
 <summary>Native path (no Docker)</summary>
 
