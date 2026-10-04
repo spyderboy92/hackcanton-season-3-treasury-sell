@@ -8,7 +8,7 @@ export function WorkflowGuide({ view, asParty }: { view: RfqView; asParty: Party
   const treasury = asParty === rfq.payload.treasury;
   const ended = rfq.payload.status !== 'Open';
   const filled = Boolean(trade || instruction || receipt);
-  const stage = receipt ? 3 : filled ? 2 : 1;
+  const stage = receipt ? 4 : filled ? 3 : ended ? 0 : quotes.length ? 2 : 1;
   let title: string;
   let detail: string;
 
@@ -45,10 +45,13 @@ export function WorkflowGuide({ view, asParty }: { view: RfqView; asParty: Party
     <section aria-label="Request progress" className="mx-4 overflow-hidden rounded-md border border-line bg-surface">
       <ol className="grid grid-cols-3 border-b border-line">
         {['Request quotes', 'Accept a quote', 'Settle trade'].map((label, index) => (
-          <li key={label} aria-current={!ended || filled ? stage === index + 1 ? 'step' : undefined : undefined}
+          <li key={label} aria-current={stage === index + 1 ? 'step' : undefined}
             className={cn('flex items-center gap-2 px-3 py-3 text-mini sm:px-4', stage === index + 1 ? 'bg-raised font-medium text-ink' : 'text-ink-3')}>
-            <span aria-hidden className="num flex size-6 shrink-0 items-center justify-center rounded-full bg-canvas text-micro">{index + 1}</span>
+            <span aria-hidden className="num flex size-6 shrink-0 items-center justify-center rounded-full bg-canvas text-micro">
+              {stage > index + 1 ? <svg className="size-3 text-pos" viewBox="0 0 16 16" fill="none"><path d="m3 8 3 3 7-7" stroke="currentColor" strokeWidth="2" /></svg> : index + 1}
+            </span>
             <span>{label}</span>
+            {stage > index + 1 ? <span className="sr-only">Complete</span> : null}
           </li>
         ))}
       </ol>
