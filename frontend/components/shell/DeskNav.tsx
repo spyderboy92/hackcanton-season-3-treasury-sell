@@ -20,7 +20,8 @@ const ITEMS: Item[] = [
 export function DeskNav() {
   const pathname = usePathname();
   return (
-    <nav className="flex items-center" aria-label="Desks">
+    <nav className="flex flex-wrap items-center gap-1" aria-label="Switch desk">
+      <span className="mr-2 text-mini text-ink-3">View as</span>
       {ITEMS.map((item) => {
         const active = pathname === item.href;
         return (
@@ -29,13 +30,10 @@ export function DeskNav() {
             href={item.href}
             aria-current={active ? 'page' : undefined}
             className={cn(
-              'relative border-r border-line px-3 py-1 text-mini transition-colors first:border-l',
-              active ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
+              'inline-flex min-h-9 items-center rounded-xs px-3 py-2 text-mini font-medium transition-colors',
+              active ? 'bg-raised text-ink' : 'text-ink-3 hover:bg-surface hover:text-ink',
             )}
           >
-            {active ? (
-              <span className="absolute inset-x-0 -bottom-px h-px bg-accent" aria-hidden />
-            ) : null}
             {item.label}
           </Link>
         );
@@ -44,13 +42,13 @@ export function DeskNav() {
         href="/demo"
         aria-current={pathname === '/demo' ? 'page' : undefined}
         className={cn(
-          'ml-2 border px-3 py-1 text-mini transition-colors',
+          'inline-flex min-h-9 items-center rounded-xs px-3 py-2 text-mini transition-colors',
           pathname === '/demo'
-            ? 'border-accent text-accent'
-            : 'border-line text-ink-3 hover:border-line-hi hover:text-ink-2',
+            ? 'bg-raised text-ink'
+            : 'text-ink-3 hover:bg-surface hover:text-ink',
         )}
       >
-        Split view
+        Compare views
       </Link>
     </nav>
   );
