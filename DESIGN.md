@@ -23,7 +23,7 @@ Existing translucent accent, positive and negative washes remain. Selection uses
 
 ## 3. Typography
 
-IBM Plex Sans for prose and IBM Plex Mono for amounts and identifiers. Micro 11px/16px, mini 12px/18px, xs 13px/20px, sm 14px/22px, base 16px/24px, lg 18px/26px, xl 22px/28px, 2xl 28px/34px, 3xl 36px/40px, 4xl 48px/52px. Labels use 12px medium weight; panel headings 14px semibold; page headings 28px semibold. Keep important copy out of the micro scale.
+IBM Plex Sans for prose and IBM Plex Mono for amounts and identifiers. Micro 11px/16px, mini 12px/18px, xs 13px/20px, sm 14px/22px, base 16px/24px, lg 18px/26px, xl 22px/28px, 2xl 28px/34px, 3xl 36px/40px, 4xl 48px/52px. Labels use 12px medium weight; panel headings 14px semibold; desk headings 28px semibold. The home display heading uses 36px below 640px and 48px above. Keep important copy out of the micro scale.
 
 ## 4. Spacing and layout
 
@@ -32,7 +32,7 @@ Use the existing four-pixel spacing grid: 4, 8, 12, 16, 20, 24, 32 and 48px. She
 ## 5. Primitives and states
 
 - Buttons: small 36px, medium 44px minimum height; six-pixel radius; primary brass fill, secondary neutral surface, ghost subdued label, danger red label. Disabled and pending states prevent repeated actions and expose aria-busy.
-- Panels: ten-pixel radius, neutral border, surface fill; wrapping headings and actions; 16px body padding.
+- Panels: ten-pixel radius, neutral border, surface fill; wrapping headings and actions; 16px body padding. Descriptions get a full line when the panel is narrower than 576px. Comparison cards place explanatory copy beneath their title; the comparison toolbar stacks terms, explanation and actions below 1280px.
 - Fields: 44px controls, six-pixel radius, clear labels, native select arrow, visible keyboard focus. Invalid quantity and deadline show inline guidance. Deadlines accept positive whole minutes or an explicit No quote deadline choice. RFQ forms submit on Enter and offer Cancel.
 - Request list: neutral selected wash, aria-current, explicit Selected label, comfortably spaced rows.
 - Workflow guide: three ordered stages (request, accept, settle), completed-state check marks and party-specific next-action copy, derived solely from the current party's snapshot. A losing dealer must never get a winner or winning price from this component.
