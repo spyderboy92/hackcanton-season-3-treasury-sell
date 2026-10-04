@@ -46,6 +46,7 @@ export function QuoteBook({
 }) {
   const { side, quantity, quoteCurrency, asset, status, invitedDealers } = rfq.payload;
   const [reviewing, setReviewing] = useState<string | null>(null);
+  const reviewedQuote = status === 'Open' ? quotes.find((quote) => quote.contractId === reviewing) : undefined;
 
   const asQuotes: Contract<Quote>[] = filled
     ? [
@@ -99,20 +100,38 @@ export function QuoteBook({
   }
 
   return (
+    <>
+    {reviewedQuote ? (
+      <section aria-label="Review quote" className="space-y-4 border-b border-line bg-raised p-4">
+        <div>
+          <h3 className="text-sm font-semibold">Accept {partyLabel(reviewedQuote.payload.dealer)}’s quote?</h3>
+          <p className="mt-1 text-xs text-ink-2">This closes the request and commits both desks to the trade.</p>
+        </div>
+        <dl className="flex flex-wrap gap-x-8 gap-y-3">
+          <div><dt className="label">Unit price</dt><dd className="mt-1"><Amount value={reviewedQuote.payload.price} /> {quoteCurrency}</dd></div>
+          <div><dt className="label">Total value</dt><dd className="mt-1 font-medium"><Amount value={multiply(quantity, reviewedQuote.payload.price)} dp={2} /> {quoteCurrency}</dd></div>
+        </dl>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" disabled={Boolean(pendingKey)} busy={pendingKey === `accept:${reviewedQuote.contractId}`}
+            onClick={() => onAccept(reviewedQuote.contractId)}>Confirm acceptance</Button>
+          <Button disabled={Boolean(pendingKey)} onClick={() => setReviewing(null)}>Cancel</Button>
+        </div>
+      </section>
+    ) : null}
     <Table>
       <thead>
         <tr>
-          <Th className="w-8">#</Th>
+          <Th className="hidden w-8 @min-[36rem]:table-cell">#</Th>
           <Th>Dealer</Th>
-          <Th className="hidden lg:table-cell">Party</Th>
+          <Th className="hidden @min-[54rem]:table-cell">Party</Th>
           <Th align="right">Price {quoteCurrency}</Th>
-          <Th align="right" className="hidden sm:table-cell">
+          <Th align="right" className="hidden @min-[36rem]:table-cell">
             Notional {quoteCurrency}
           </Th>
-          <Th align="right" className="hidden md:table-cell">
+          <Th align="right" className="hidden @min-[48rem]:table-cell">
             vs best
           </Th>
-          <Th align="right" className="hidden md:table-cell">
+          <Th align="right" className="hidden @min-[60rem]:table-cell">
             Received
           </Th>
           <Th align="right" className="w-24" />
@@ -134,11 +153,11 @@ export function QuoteBook({
                     : 'hover:bg-raised',
               )}
             >
-              <Td num className="text-ink-4">
+              <Td num className="hidden text-ink-4 @min-[36rem]:table-cell">
                 {row.rank ?? '—'}
               </Td>
               <Td>
-                <div className="flex items-baseline gap-2">
+                <div className="flex flex-wrap items-baseline gap-x-2">
                   <span className={cn('font-medium whitespace-nowrap', won ? 'text-pos' : 'text-ink')}>
                     {partyLabel(row.dealer)}
                   </span>
@@ -147,12 +166,12 @@ export function QuoteBook({
                     <span className="text-micro tracking-wider text-accent">BEST</span>
                   ) : null}
                 </div>
-                <div className="whitespace-nowrap text-mini text-ink-3">{institutionOf(row.dealer)}</div>
+                <div className="text-mini text-ink-3">{institutionOf(row.dealer)}</div>
                 {reviewing === row.quoteContractId && row.state === 'live' ? (
                   <span className="mt-1 block text-mini text-ink-2">Review before accepting</span>
                 ) : null}
               </Td>
-              <Td className="hidden lg:table-cell">
+              <Td className="hidden @min-[54rem]:table-cell">
                 <PartyId party={row.dealer} />
               </Td>
               <Td align="right">
@@ -169,7 +188,7 @@ export function QuoteBook({
                   <span className="text-mini text-ink-4">awaiting</span>
                 )}
               </Td>
-              <Td align="right" className="hidden sm:table-cell">
+              <Td align="right" className="hidden @min-[36rem]:table-cell">
                 {row.price ? (
                   <Amount
                     value={multiply(quantity, row.price)}
@@ -180,35 +199,19 @@ export function QuoteBook({
                   <span className="text-ink-4">—</span>
                 )}
               </Td>
-              <Td align="right" className="hidden md:table-cell">
+              <Td align="right" className="hidden @min-[48rem]:table-cell">
                 {row.price ? <BasisPoints value={row.awayBps} /> : <span className="text-ink-4">—</span>}
               </Td>
-              <Td align="right" className="hidden md:table-cell">
+              <Td align="right" className="hidden @min-[60rem]:table-cell">
                 {row.submittedAt ? <Timestamp iso={row.submittedAt} /> : <span className="text-ink-4">—</span>}
               </Td>
               <Td align="right">
                 {row.state === 'live' && row.quoteContractId ? (
-                  reviewing === row.quoteContractId ? (
-                    <div className="space-y-2">
-                      <p className="text-mini text-ink-2">
-                        Total <Amount value={multiply(quantity, row.price!)} dp={2} /> {quoteCurrency}
-                      </p>
-                      <div className="flex justify-end gap-2">
-                        <Button size="sm" disabled={Boolean(pendingKey)} onClick={() => setReviewing(null)}>Cancel</Button>
-                        <Button size="sm" variant="primary" disabled={Boolean(pendingKey)} busy={pendingKey === `accept:${row.quoteContractId}`}
-                          aria-label={`Confirm acceptance of ${partyLabel(row.dealer)} quote`}
-                          onClick={() => { if (row.quoteContractId) onAccept(row.quoteContractId); }}>
-                          Confirm
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
                     <Button size="sm" variant={best ? 'primary' : 'secondary'} disabled={Boolean(pendingKey)}
                       aria-label={`Review ${partyLabel(row.dealer)} quote`}
                       onClick={() => setReviewing(row.quoteContractId)}>
                       Review
                     </Button>
-                  )
                 ) : row.state === 'passed' ? (
                   <span className="text-mini text-ink-4">not filled</span>
                 ) : null}
@@ -222,5 +225,6 @@ export function QuoteBook({
         Prices are per {asset}; other dealers cannot see these quotes.
       </caption>
     </Table>
+    </>
   );
 }
