@@ -20,11 +20,13 @@ export function CreateRfqPanel({
   busy,
   error,
   onDismissError,
+  onCancel,
 }: {
   onSubmit: (command: CreateRfqCommand) => void;
   busy: boolean;
   error: string | null;
   onDismissError: () => void;
+  onCancel: () => void;
 }) {
   const [side, setSide] = useState<Side>('Sell');
   const [asset, setAsset] = useState('cETH');
@@ -34,28 +36,28 @@ export function CreateRfqPanel({
   const [dealers, setDealers] = useState<string[]>(DEALERS.map((d) => d.party));
 
   const quantityValid = isDecimal(quantity) && isPositive(quantity);
-  const ready = quantityValid && dealers.length > 0 && !busy;
+  const deadlineMinutes = Number(minutes);
+  const deadlineValid = /^\d+$/.test(minutes) && Number.isSafeInteger(deadlineMinutes) && deadlineMinutes >= 1 && deadlineMinutes <= 1440;
+  const ready = quantityValid && deadlineValid && dealers.length > 0 && !busy;
 
   const submit = () => {
     if (!ready) return;
-    const mins = Number.parseInt(minutes, 10);
     onSubmit({
       asset,
       quoteCurrency: currency,
       side,
       quantity,
-      quoteDeadline:
-        Number.isFinite(mins) && mins > 0
-          ? new Date(Date.now() + mins * 60_000).toISOString()
-          : null,
+      quoteDeadline: new Date(Date.now() + deadlineMinutes * 60_000).toISOString(),
       invitedDealers: dealers,
     });
   };
 
   return (
     <Panel>
-      <PanelHeader title="Raise an RFQ" meta="Terms go to every invited dealer" />
+      <PanelHeader title="New quote request" meta="Choose your terms and dealer panel" />
       <PanelBody className="space-y-3">
+        <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <fieldset disabled={busy} className="space-y-4">
         <div>
           <span className="label mb-1 block">Direction</span>
           <div className="flex">
@@ -66,10 +68,10 @@ export function CreateRfqPanel({
                 onClick={() => setSide(option)}
                 aria-pressed={side === option}
                 className={
-                  'h-8 flex-1 border text-xs transition-colors ' +
+                  'min-h-11 flex-1 rounded-xs border border-line-hi px-2 text-xs transition-colors ' +
                   (side === option
-                    ? 'border-accent bg-accent-wash text-accent'
-                    : 'border-line-hi text-ink-3 hover:text-ink') +
+                    ? 'bg-raised font-medium text-ink'
+                    : 'text-ink-3 hover:bg-raised hover:text-ink') +
                   (option === 'Buy' ? ' -ml-px' : '')
                 }
               >
@@ -107,16 +109,18 @@ export function CreateRfqPanel({
           >
             <TextInput
               mono
+              aria-invalid={!quantityValid}
               inputMode="decimal"
               value={quantity}
               suffix={asset}
               onChange={(e) => setQuantity(e.target.value)}
             />
           </Field>
-          <Field label="Quotes close in">
+          <Field label="Quotes close in" hint={deadlineValid ? '1 to 1,440 minutes' : <span className="text-neg">Enter a whole number from 1 to 1,440</span>}>
             <TextInput
               mono
               inputMode="numeric"
+              aria-invalid={!deadlineValid}
               value={minutes}
               suffix="min"
               onChange={(e) => setMinutes(e.target.value)}
@@ -137,25 +141,31 @@ export function CreateRfqPanel({
                   )
                 }
                 primary={
-                  <span className="flex items-baseline gap-2">
+                  <span className="flex flex-wrap items-baseline gap-x-2">
                     <span className="font-medium">{partyLabel(d.party)}</span>
                     <span className="text-mini text-ink-3">{institutionOf(d.party)}</span>
                   </span>
                 }
-                secondary={<PartyId party={d.party} keep={4} />}
+                secondary={<span className="hidden sm:inline"><PartyId party={d.party} keep={4} /></span>}
               />
             ))}
           </div>
+          {dealers.length === 0 ? <p className="mt-2 text-mini text-neg">Select at least one dealer.</p> : null}
         </div>
+        </fieldset>
 
         {error ? <Notice onDismiss={onDismissError}>{error}</Notice> : null}
 
-        <Button variant="primary" size="md" className="w-full" busy={busy} onClick={submit} disabled={!ready}>
-          Raise RFQ and issue invitations
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button type="submit" variant="primary" size="md" className="flex-1" busy={busy} disabled={!ready}>
+            Send quote request
+          </Button>
+          <Button type="button" disabled={busy} onClick={onCancel}>Cancel</Button>
+        </div>
         <p className="text-mini text-ink-3">
-          One shared RFQ contract carrying terms only, plus one private invitation per dealer.
+          Invited dealers see these terms. Each price is private between you and the dealer.
         </p>
+        </form>
       </PanelBody>
     </Panel>
   );
