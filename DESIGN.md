@@ -33,10 +33,10 @@ Use the existing four-pixel spacing grid: 4, 8, 12, 16, 20, 24, 32 and 48px. She
 
 - Buttons: small 36px, medium 44px minimum height; six-pixel radius; primary brass fill, secondary neutral surface, ghost subdued label, danger red label. Disabled and pending states prevent repeated actions and expose aria-busy.
 - Panels: ten-pixel radius, neutral border, surface fill; wrapping headings and actions; 16px body padding.
-- Fields: 44px controls, six-pixel radius, clear labels, native select arrow, visible keyboard focus. Invalid quantity and deadline show inline guidance. RFQ forms submit on Enter and offer Cancel.
+- Fields: 44px controls, six-pixel radius, clear labels, native select arrow, visible keyboard focus. Invalid quantity and deadline show inline guidance. Deadlines accept positive whole minutes or an explicit No quote deadline choice. RFQ forms submit on Enter and offer Cancel.
 - Request list: neutral selected wash, aria-current, explicit Selected label, comfortably spaced rows.
-- Workflow guide: three ordered stages (request, accept, settle) plus party-specific next-action copy, derived solely from the current party's snapshot. A losing dealer must never get a winner or winning price from this component.
-- Quote acceptance: inline review of dealer, price and total before the final command; Cancel returns to the book. Disable all acceptance controls while a command is pending.
+- Workflow guide: three ordered stages (request, accept, settle), completed-state check marks and party-specific next-action copy, derived solely from the current party's snapshot. A losing dealer must never get a winner or winning price from this component.
+- Quote acceptance: inline review above the table shows dealer, price and total before the final command; Cancel returns to the book. Disable all acceptance controls while a command is pending. Table columns respond to their container: rank and notional at 576px, spread at 768px, party at 864px and received time at 960px. The dealer, price and review action remain visible on compact screens.
 - Terms: prominent quantity/instrument, status, secondary reference and deadline; wrap on small screens.
 
 ## 6. Motion
