@@ -23,7 +23,7 @@ export default function EntitlementsGate() {
         <div className="flex flex-col gap-10 border-b border-line px-6 py-10 lg:border-r lg:border-b-0 lg:px-8 lg:py-12">
           <div>
             <p className="label mb-4">Private trading on Canton</p>
-            <h1 className="max-w-[19ch] text-4xl font-semibold tracking-tight text-ink">
+            <h1 className="max-w-[19ch] text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
               Request quotes.<br />Compare privately.<br />Settle together.
             </h1>
             <p className="mt-6 max-w-[52ch] text-sm leading-relaxed text-ink-2">
@@ -107,16 +107,16 @@ export default function EntitlementsGate() {
             <div className="pt-6">
               <Link
                 href="/demo"
-                className="group flex flex-wrap items-center gap-x-5 gap-y-2 rounded-md border border-line bg-surface px-5 py-5 transition-colors hover:bg-raised"
+                className="group grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 rounded-md border border-line bg-surface px-5 py-5 transition-colors hover:bg-raised"
               >
                 <span className="text-sm font-medium tracking-tight text-accent">
                   Compare treasury and dealer views
                 </span>
-                <span className="min-w-0 flex-1 text-xs text-ink-2">
+                <span className="col-start-1 row-start-2 text-xs text-ink-2">
                   Treasury and one dealer side by side, reading the same ledger at the same moment.
                   Three prices on the left, one on the right.
                 </span>
-                <span aria-hidden className="text-accent">
+                <span aria-hidden className="col-start-2 row-span-2 row-start-1 self-center text-accent">
                   ›
                 </span>
               </Link>
