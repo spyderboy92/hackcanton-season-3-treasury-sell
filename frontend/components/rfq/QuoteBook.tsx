@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/primitives/Button';
 import { Amount, BasisPoints } from '@/components/primitives/Value';
@@ -44,6 +45,7 @@ export function QuoteBook({
   pendingKey: string | null;
 }) {
   const { side, quantity, quoteCurrency, asset, status, invitedDealers } = rfq.payload;
+  const [reviewing, setReviewing] = useState<string | null>(null);
 
   const asQuotes: Contract<Quote>[] = filled
     ? [
@@ -124,13 +126,12 @@ export function QuoteBook({
             <tr
               key={row.key}
               className={cn(
-                'group border-l-2 transition-colors',
+                'group transition-colors',
                 won
-                  ? 'border-l-pos bg-pos-wash'
+                  ? 'bg-pos-wash'
                   : best
-                    ? 'border-l-accent bg-accent-wash'
-                    : 'border-l-transparent hover:bg-raised',
-                row.state === 'awaiting' && 'opacity-55',
+                    ? 'bg-accent-wash'
+                    : 'hover:bg-raised',
               )}
             >
               <Td num className="text-ink-4">
@@ -147,6 +148,9 @@ export function QuoteBook({
                   ) : null}
                 </div>
                 <div className="whitespace-nowrap text-mini text-ink-3">{institutionOf(row.dealer)}</div>
+                {reviewing === row.quoteContractId && row.state === 'live' ? (
+                  <span className="mt-1 block text-mini text-ink-2">Review before accepting</span>
+                ) : null}
               </Td>
               <Td className="hidden lg:table-cell">
                 <PartyId party={row.dealer} />
@@ -184,14 +188,27 @@ export function QuoteBook({
               </Td>
               <Td align="right">
                 {row.state === 'live' && row.quoteContractId ? (
-                  <Button
-                    size="sm"
-                    variant={best ? 'primary' : 'secondary'}
-                    busy={pendingKey === `accept:${row.quoteContractId}`}
-                    onClick={() => onAccept(row.quoteContractId as string)}
-                  >
-                    Accept
-                  </Button>
+                  reviewing === row.quoteContractId ? (
+                    <div className="space-y-2">
+                      <p className="text-mini text-ink-2">
+                        Total <Amount value={multiply(quantity, row.price!)} dp={2} /> {quoteCurrency}
+                      </p>
+                      <div className="flex justify-end gap-2">
+                        <Button size="sm" disabled={Boolean(pendingKey)} onClick={() => setReviewing(null)}>Cancel</Button>
+                        <Button size="sm" variant="primary" disabled={Boolean(pendingKey)} busy={pendingKey === `accept:${row.quoteContractId}`}
+                          aria-label={`Confirm acceptance of ${partyLabel(row.dealer)} quote`}
+                          onClick={() => { if (row.quoteContractId) onAccept(row.quoteContractId); }}>
+                          Confirm
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <Button size="sm" variant={best ? 'primary' : 'secondary'} disabled={Boolean(pendingKey)}
+                      aria-label={`Review ${partyLabel(row.dealer)} quote`}
+                      onClick={() => setReviewing(row.quoteContractId)}>
+                      Review
+                    </Button>
+                  )
                 ) : row.state === 'passed' ? (
                   <span className="text-mini text-ink-4">not filled</span>
                 ) : null}
@@ -201,8 +218,8 @@ export function QuoteBook({
         })}
       </tbody>
       <caption className="caption-bottom px-3 py-2 text-left text-mini text-ink-4">
-        Each row is a separate bilateral Quote contract between {partyLabel(rfq.payload.treasury)} and
-        that dealer. No dealer is a stakeholder on any other row. Sizes shown in {asset}.
+        Review a quote to check its total, then confirm to accept it and close this request.
+        Prices are per {asset}; other dealers cannot see these quotes.
       </caption>
     </Table>
   );
