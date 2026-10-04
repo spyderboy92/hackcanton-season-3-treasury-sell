@@ -6,8 +6,8 @@ import { useId } from 'react';
 import { cn } from '@/lib/cn';
 
 const CONTROL =
-  'h-8 w-full rounded-xs border border-line-hi bg-canvas px-2 text-ink ' +
-  'placeholder:text-ink-4 focus:border-accent focus:outline-none transition-colors';
+  'h-11 w-full rounded-xs border border-line-hi bg-canvas px-3 text-ink ' +
+  'placeholder:text-ink-4 transition-colors';
 
 export function Field({
   label,
@@ -56,7 +56,7 @@ export function Select({
   ...rest
 }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select {...rest} className={cn(CONTROL, 'appearance-none text-xs', className)}>
+    <select {...rest} className={cn(CONTROL, 'text-xs', className)}>
       {children}
     </select>
   );
@@ -80,7 +80,7 @@ export function CheckRow({
     <label
       htmlFor={id}
       className={cn(
-        'flex cursor-pointer items-center gap-2.5 border-b border-line-quiet px-3 py-2 last:border-b-0',
+        'flex min-h-11 cursor-pointer items-center gap-3 border-b border-line-quiet px-3 py-3 last:border-b-0',
         checked ? 'bg-accent-wash' : 'hover:bg-raised',
         disabled && 'cursor-not-allowed opacity-50',
       )}
@@ -91,7 +91,7 @@ export function CheckRow({
         checked={checked}
         disabled={disabled}
         onChange={(e) => onChange(e.target.checked)}
-        className="size-3 shrink-0 accent-[var(--accent)]"
+        className="size-4 shrink-0 accent-[var(--accent)]"
       />
       <span className="min-w-0 flex-1 text-xs">{primary}</span>
       {secondary ? <span className="shrink-0">{secondary}</span> : null}
