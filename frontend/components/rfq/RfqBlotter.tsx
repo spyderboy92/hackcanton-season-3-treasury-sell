@@ -37,10 +37,10 @@ export function RfqBlotter({
               onClick={() => onSelect(payload.rfqId)}
               aria-current={active ? 'true' : undefined}
               className={cn(
-                'w-full border-b border-line-quiet border-l-2 px-3 py-2.5 text-left transition-colors',
+                'w-full border-b border-line px-4 py-4 text-left transition-colors',
                 active
-                  ? 'border-l-accent bg-accent-wash'
-                  : 'border-l-transparent hover:bg-raised',
+                  ? 'bg-raised'
+                  : 'hover:bg-raised',
               )}
             >
               <div className="flex items-baseline justify-between gap-2">
@@ -63,6 +63,7 @@ export function RfqBlotter({
                   {payload.status}
                 </StatusTag>
               </div>
+              {active ? <span className="mt-2 block text-micro font-medium text-ink-2">Selected request</span> : null}
             </button>
           </li>
         );
