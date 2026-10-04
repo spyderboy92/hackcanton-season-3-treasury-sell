@@ -221,8 +221,12 @@ export function QuoteBook({
         })}
       </tbody>
       <caption className="caption-bottom px-3 py-2 text-left text-mini text-ink-4">
-        Review a quote to check its total, then confirm to accept it and close this request.
-        Prices are per {asset}; other dealers cannot see these quotes.
+        {status === 'Open'
+          ? 'Review a quote to check its total, then confirm to accept it and close this request.'
+          : filled
+            ? 'The accepted quote is shown alongside the remaining dealer prices. This request is closed.'
+            : 'This request has ended. These quotes are available for reference.'}
+        {' '}Prices are per {asset}; other dealers cannot see these quotes.
       </caption>
     </Table>
     </>
