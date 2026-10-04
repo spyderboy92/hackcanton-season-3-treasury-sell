@@ -23,7 +23,7 @@ Existing translucent accent, positive and negative washes remain. Selection uses
 
 ## 3. Typography
 
-IBM Plex Sans for prose and IBM Plex Mono for amounts and identifiers. Micro 11px/16px, mini 12px/18px, xs 13px/20px, sm 14px/22px, base 16px/24px, lg 18px/26px, xl 22px/28px, 2xl 28px/34px, 3xl 36px/40px, 4xl 48px/52px. Labels use 12px medium weight; panel headings 14px semibold; desk headings 28px semibold. The home display heading uses 36px below 640px and 48px above. Keep important copy out of the micro scale.
+IBM Plex Sans for prose and IBM Plex Mono for amounts and identifiers. Micro 11px/16px, mini 12px/18px, xs 13px/20px, sm 14px/22px, base 16px/24px, lg 18px/26px, xl 22px/28px, 2xl 28px/34px, 3xl 36px/40px, 4xl 48px/52px. Labels use 12px medium weight; panel headings 14px semibold; desk identity headings 18px semibold; primary request amounts 28px semibold. The home display heading uses 36px below 640px and 48px above. Keep important copy out of the micro scale.
 
 ## 4. Spacing and layout
 
