@@ -344,8 +344,8 @@ function OutcomeStrip({
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center gap-x-4 gap-y-1 border-t-2 px-4 py-3',
-        tone === 'good' ? 'border-t-pos bg-pos-wash' : 'border-t-line-hi bg-raised',
+        'flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line px-4 py-3',
+        tone === 'good' ? 'bg-pos-wash' : 'bg-raised',
       )}
     >
       <span className={cn('text-xs font-medium', tone === 'good' ? 'text-pos' : 'text-ink-2')}>
