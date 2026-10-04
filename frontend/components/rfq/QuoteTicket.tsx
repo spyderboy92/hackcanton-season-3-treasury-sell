@@ -113,7 +113,9 @@ export function QuoteTicket({
         {mode === 'submit' || mode === 'revise' ? (
           <form className="space-y-4" onSubmit={(event) => {
             event.preventDefault();
-            if (valid && !pendingKey) mode === 'revise' ? onRevise(price) : onSubmit(price);
+            if (!valid || pendingKey) return;
+            if (mode === 'revise') onRevise(price);
+            else onSubmit(price);
           }}>
             <Field
               label={`Price per ${p.asset} in ${p.quoteCurrency}`}
