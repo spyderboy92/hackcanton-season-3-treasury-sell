@@ -33,11 +33,12 @@ export function CreateRfqPanel({
   const [currency, setCurrency] = useState('USD');
   const [quantity, setQuantity] = useState('10.0000');
   const [minutes, setMinutes] = useState('15');
+  const [noDeadline, setNoDeadline] = useState(false);
   const [dealers, setDealers] = useState<string[]>(DEALERS.map((d) => d.party));
 
   const quantityValid = isDecimal(quantity) && isPositive(quantity);
   const deadlineMinutes = Number(minutes);
-  const deadlineValid = /^\d+$/.test(minutes) && Number.isSafeInteger(deadlineMinutes) && deadlineMinutes >= 1 && deadlineMinutes <= 1440;
+  const deadlineValid = noDeadline || (/^\d+$/.test(minutes) && Number.isSafeInteger(deadlineMinutes) && deadlineMinutes > 0 && Number.isFinite(new Date(Date.now() + deadlineMinutes * 60_000).getTime()));
   const ready = quantityValid && deadlineValid && dealers.length > 0 && !busy;
 
   const submit = () => {
@@ -47,7 +48,7 @@ export function CreateRfqPanel({
       quoteCurrency: currency,
       side,
       quantity,
-      quoteDeadline: new Date(Date.now() + deadlineMinutes * 60_000).toISOString(),
+      quoteDeadline: noDeadline ? null : new Date(Date.now() + deadlineMinutes * 60_000).toISOString(),
       invitedDealers: dealers,
     });
   };
@@ -116,10 +117,11 @@ export function CreateRfqPanel({
               onChange={(e) => setQuantity(e.target.value)}
             />
           </Field>
-          <Field label="Quotes close in" hint={deadlineValid ? '1 to 1,440 minutes' : <span className="text-neg">Enter a whole number from 1 to 1,440</span>}>
+          <Field label="Quotes close in" hint={deadlineValid ? noDeadline ? 'Open until you close or cancel' : 'Minutes from when you send the request' : <span className="text-neg">Enter a positive whole number of minutes</span>}>
             <TextInput
               mono
               inputMode="numeric"
+              disabled={noDeadline}
               aria-invalid={!deadlineValid}
               value={minutes}
               suffix="min"
@@ -127,6 +129,7 @@ export function CreateRfqPanel({
             />
           </Field>
         </div>
+        <CheckRow checked={noDeadline} onChange={setNoDeadline} primary="No quote deadline" />
 
         <div>
           <span className="label mb-1 block">Invite dealers</span>
