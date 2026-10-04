@@ -25,7 +25,7 @@ export function ReceiptTable({ receipts }: { receipts: Contract<SettlementReceip
       </thead>
       <tbody>
         {receipts.map(({ contractId, payload }) => (
-          <tr key={contractId} className="border-l-2 border-l-pos">
+          <tr key={contractId} className="bg-pos-wash">
             <Td>
               <Timestamp iso={payload.settledAt} className="text-xs text-ink" />
             </Td>
