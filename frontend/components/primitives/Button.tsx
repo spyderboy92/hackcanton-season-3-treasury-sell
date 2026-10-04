@@ -14,8 +14,8 @@ const VARIANT: Record<Variant, string> = {
 };
 
 const SIZE: Record<Size, string> = {
-  sm: 'h-6 px-2 text-mini',
-  md: 'h-8 px-3 text-xs',
+  sm: 'min-h-9 px-3 text-mini',
+  md: 'min-h-11 px-4 text-xs',
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -37,17 +37,18 @@ export function Button({
     <button
       {...rest}
       disabled={disabled || busy}
+      aria-busy={busy}
       data-busy={busy || undefined}
       className={cn(
         'inline-flex items-center justify-center gap-1.5 rounded-xs border',
-        'whitespace-nowrap transition-colors duration-100',
+        'whitespace-nowrap transition-colors duration-150',
         'disabled:cursor-not-allowed disabled:opacity-40',
         VARIANT[variant],
         SIZE[size],
         className,
       )}
     >
-      {busy ? <span className="breathe">·</span> : null}
+      {busy ? <span className="breathe" aria-hidden>·</span> : null}
       {children}
     </button>
   );
