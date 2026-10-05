@@ -18,24 +18,11 @@ export function ledgerBackend(): LedgerBackend {
   return process.env.NEXT_PUBLIC_LEDGER === 'canton' ? 'canton' : 'mock';
 }
 
-/**
- * Base URL of the Canton JSON Ledger API. Server-side only — deliberately not
- * a `NEXT_PUBLIC_` variable.
- */
-export function jsonApiBaseUrl(): string {
-  return (process.env.LEDGER_JSON_API ?? 'http://127.0.0.1:6864').replace(/\/+$/, '');
-}
-
 /** Shown in the status rail. Host and port only; no scheme, no secrets. */
 export function ledgerEndpointLabel(): string {
   const configured = process.env.NEXT_PUBLIC_LEDGER_ENDPOINT;
   if (configured) return configured;
   return '127.0.0.1:6864';
-}
-
-/** Optional user id sent with every submission. Purely for participant logs. */
-export function ledgerUserId(): string {
-  return process.env.LEDGER_USER_ID ?? 'treasury-rfq-ui';
 }
 
 /** How often the browser asks the participant for its ledger end. */

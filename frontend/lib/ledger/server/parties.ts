@@ -67,7 +67,10 @@ export async function resolveDemoParties(): Promise<ResolvedParties> {
 
   let allocated: Party[] = [];
   try {
-    allocated = (await listParties()).map((p) => p.party);
+    // Pinned roles avoid party-list permissions on managed participants.
+    if (ROLES.some((role) => !process.env[ENV_OVERRIDE[role]])) {
+      allocated = (await listParties()).map((p) => p.party);
+    }
   } catch (cause) {
     console.warn('[ledger] could not list parties; falling back to placeholder ids', cause);
   }
