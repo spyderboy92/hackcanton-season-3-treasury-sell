@@ -11,7 +11,8 @@
  * (`GET /docs/openapi` on the JSON API port), not from guesswork.
  */
 
-import { jsonApiBaseUrl, ledgerUserId } from '../config';
+import { authorizationHeaders } from './auth';
+import { ledgerConnection } from './config';
 import { LedgerError, type LedgerErrorCode, type LedgerTemplate } from '../client';
 import type { Party } from '../types';
 
@@ -111,14 +112,18 @@ interface CantonError {
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const url = `${jsonApiBaseUrl()}${path}`;
+  const connection = ledgerConnection();
+  const url = `${connection.baseUrl}${path}`;
+  const authHeaders = await authorizationHeaders(connection);
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
       // Ledger reads are never cached: the whole point is a live ACS.
       cache: 'no-store',
-      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+      redirect: 'error',
+      signal: AbortSignal.timeout(30_000),
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}), ...authHeaders },
     });
   } catch (cause) {
     // Next signals "this route cannot be static" by throwing out of fetch.
@@ -126,11 +131,14 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
     if (isFrameworkBailout(cause)) throw cause;
     throw new LedgerError(
       'UNAVAILABLE',
-      `The participant at ${jsonApiBaseUrl()} did not answer (${describe(cause)}).`,
+      'The participant did not answer.',
     );
   }
 
   const body = await response.text();
+  if (response.status === 401 || response.status === 403) {
+    throw new LedgerError('NOT_AUTHORIZED', 'Participant rejected the credentials or party permissions.');
+  }
   if (!response.ok) throw mapError(response.status, body);
   if (!body) return undefined as T;
   try {
@@ -142,10 +150,6 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 
 function isFrameworkBailout(cause: unknown): boolean {
   return typeof (cause as { digest?: unknown } | null)?.digest === 'string';
-}
-
-function describe(cause: unknown): string {
-  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /**
@@ -411,7 +415,7 @@ export async function submit(
       body: JSON.stringify({
         commands: {
           commandId: commandId(),
-          userId: ledgerUserId(),
+          userId: ledgerConnection().userId,
           actAs: [asParty],
           commands,
           disclosedContracts,

@@ -1,0 +1,15 @@
+name: treasury-rfq-external
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_LEDGER: canton
+        NEXT_PUBLIC_LEDGER_ENDPOINT: "External Canton participant"
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - ${FRONTEND_ENV_FILE:-./frontend/.env.local}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

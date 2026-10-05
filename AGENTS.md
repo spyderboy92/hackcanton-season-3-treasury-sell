@@ -786,15 +786,36 @@ untouched. See invariant 4.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `NEXT_PUBLIC_LEDGER` | `mock` | `canton` selects the live backend |
-| `LEDGER_JSON_API` | `http://127.0.0.1:6864` | JSON Ledger API base URL. **Server-side only.** |
+| `LEDGER_NETWORK` | `sandbox` | Server-only profile: sandbox (no auth), localnet (JWT), devnet (Auth0 client credentials). |
+| `LEDGER_JSON_API` | `http://127.0.0.1:6864` in sandbox | JSON Ledger API base URL. Required for external profiles; HTTPS required for DevNet. **Server-side only.** |
+| `LEDGER_JWT_TOKEN` | — | LocalNet bearer token, without the Bearer prefix; replace/restart on expiry. |
+| `LEDGER_AUTH0_DOMAIN`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_AUDIENCE` | — | DevNet machine-to-machine grant settings, **server only**, never NEXT_PUBLIC. |
 | `NEXT_PUBLIC_LEDGER_ENDPOINT` | `127.0.0.1:6864` | What the status rail displays |
 | `NEXT_PUBLIC_LEDGER_POLL_MS` | `1500` | Ledger-end poll interval (min 250) |
-| `LEDGER_USER_ID` | `treasury-rfq-ui` | User id stamped on every submission |
+| `LEDGER_USER_ID` | `treasury-rfq-ui` | Provisioned ledger user recognized by the token on authenticated networks |
 | `APP_ORIGIN` | `http://127.0.0.1:3000` | Where server-side fetches address this app |
 | `LEDGER_PARTY_*` | — | Pin a party id instead of resolving it |
 | `NEXT_DIST_DIR` | `.next` | Build output directory |
 
 ---
+
+### External network profiles
+
+`lib/ledger/server/config.ts` validates the network profile and credentials;
+`server/auth.ts` supplies JWT headers or cached Auth0 client-credentials tokens.
+All reads, submissions and seller disclosure reads go through the same authenticated
+transport in `server/json-api.ts`. No command or stakeholder shape changes.
+External profiles must supply an endpoint and credentials; there is no fallback
+to an unauthenticated participant. Auth0 grant failures and HTTP 401/403 responses
+are redacted before returning errors to the browser.
+
+The app still has **no inbound user authentication**: server credentials authorize
+a trusted demo operator, not the person selecting a desk. Keep every frontend on
+loopback, including LocalNet/DevNet profiles. One participant must host all demo
+parties; pin all six `LEDGER_PARTY_*` ids to skip party discovery on managed networks.
+See `frontend/README.md`, `frontend/env/*.example`, and `docker-compose.external.yml`.
+Run `cd frontend && npm run test:ledger` for the server profile/auth/adapter tests;
+these do not replace live network privacy and settlement checks.
 
 ## 7. Common tasks — recipes
 
@@ -915,7 +936,7 @@ Stated, not hidden. Each is deliberately unfixed for a recorded reason.
 | --- | --- |
 | **The allocated asset is pinned by `ContractId`, not escrowed.** `SettlementInstruction.assetHoldingCid` points at a holding that stays under the seller's control, so the seller can `Transfer` or split it between the two DvP steps. | This mock `TokenHolding` has no lock primitive. If the seller does spend it, `AllocatePaymentAndSettle` fails when it fetches the archived id — a contract-not-found rejection, not a clean assert — and the whole transaction aborts: nothing is lost and no partial settlement is possible. The seller does hold an option to walk away between the two steps. In a real deployment the pin is replaced by a **CIP-56 registry lock**, which the registry owns; building a lock or an escrow party into the mock would misrepresent where that responsibility lives. Pinned by `Tests.Settlement.settlementPinnedAssetCanBeSpentBySeller`. |
 | **`RfqFill` bounds reuse, not minting.** The treasury is its only signatory, so it can create a second fill right for the same `rfqId` and bind two dealers to the same quantity. | No ledger-level fix is available. Contract keys need LF 2.3 and this package targets 2.2 — and raising the target does not help: **Canton 3.5.1 does not enforce key uniqueness**, verified directly against a 3.5.1 sandbox where two contracts sharing `key (treasury, rfqId)` were both accepted. A key would read as a guarantee while enforcing nothing, which is worse than the stated gap. Enforcement would need a signatory the treasury does not control — a registry or notary party — which is a topology change, not a model change. The exposure is self-inflicted and invisible to dealers (`RfqFill` has no observers), so no dealer can detect it in advance. Exercised by `Tests.Authorization.authKnownLimitationTreasuryCanMintASecondFillRight`. |
-| **The Ledger API is served unauthenticated, and the acting party is whatever the caller names.** No JWT is validated on `/api/ledger/*` or by the participant. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the ports can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. So the stack is now bound to **loopback only** — `docker-compose.yml` publishes `127.0.0.1:6864`, `127.0.0.1:6865` and `127.0.0.1:3000`. **Do not publish these on `0.0.0.0` or expose them through a tunnel.** A real deployment validates a JWT at the participant and derives `asParty` from the token rather than the request body; the route handlers are the single place that change lands. |
+| **The sandbox Ledger API is unauthenticated, and the app has no inbound login.** No JWT is validated on `/api/ledger/*`; LocalNet/DevNet outbound calls use a server credential, not the caller's identity. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the ports can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. So the stack is now bound to **loopback only** — `docker-compose.yml` publishes `127.0.0.1:6864`, `127.0.0.1:6865` and `127.0.0.1:3000`. **Do not publish these on `0.0.0.0` or expose them through a tunnel.** A real deployment validates a JWT at the participant and derives `asParty` from the token rather than the request body; the route handlers are the single place that change lands. |
 | **`TokenHolding` is a mock, not a real CIP-56 asset.** | Live CIP-56 integration is P2. The module is isolated precisely so the swap is local: an adapter replaces `Transfer` and `Settlement`/`Quoting`/`Rfq` are untouched, because all they know about an asset is that it has an owner, a symbol, an amount and a `Transfer` choice. cETH and CBTC are both CIP-56 and differ by registry, not by workflow. |
 | **Settlement requires explicit disclosure of the seller's holding.** | Not a bug — it is Canton behaving correctly (no divulgence). It is listed because it is a **real integration requirement**: any client of this model must implement the seller→buyer handoff of the disclosed contract. See invariant 4. |
 

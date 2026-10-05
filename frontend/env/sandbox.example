@@ -1,0 +1,4 @@
+NEXT_PUBLIC_LEDGER=canton
+LEDGER_NETWORK=sandbox
+LEDGER_JSON_API=http://127.0.0.1:6864
+LEDGER_USER_ID=treasury-rfq-ui
