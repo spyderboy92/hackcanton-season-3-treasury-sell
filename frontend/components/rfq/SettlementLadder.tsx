@@ -60,7 +60,7 @@ export function SettlementLadder({
       active: false,
     },
     {
-      title: `Deliver ${p.asset}`,
+      title: `Allocate ${p.asset}`,
       detail: (
         <>
           <Amount value={p.quantity} symbol={p.asset} /> {p.asset} from {partyLabel(seller)} to{' '}
@@ -120,19 +120,19 @@ export function SettlementLadder({
             <li
               key={step.title}
               className={cn(
-                'flex items-start gap-3 border-b border-line-quiet px-4 py-3 last:border-b-0',
+                'grid grid-cols-[auto_minmax(0,1fr)] items-start gap-3 border-b border-line-quiet px-4 py-4 last:border-b-0 lg:grid-cols-[auto_minmax(0,1fr)_auto]',
                 step.active && 'bg-accent-wash',
               )}
             >
               <span
                 aria-hidden
                 className={cn(
-                  'num mt-0.5 flex size-4 shrink-0 items-center justify-center border text-micro',
+                  'num mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-micro',
                   step.done
-                    ? 'border-pos bg-pos text-canvas'
+                    ? 'bg-pos-wash text-pos'
                     : step.active
-                      ? 'border-accent text-accent'
-                      : 'border-line-hi text-ink-4',
+                      ? 'bg-raised text-ink'
+                      : 'bg-canvas text-ink-4',
                 )}
               >
                 {step.done ? '✓' : i + 1}
@@ -143,7 +143,7 @@ export function SettlementLadder({
                     {step.title}
                   </span>
                   <span className="text-mini text-ink-4">
-                    controller {partyLabel(step.controller)}
+                    {partyLabel(step.controller)}
                   </span>
                 </div>
                 <div className="mt-0.5 text-mini text-ink-2">{step.detail}</div>
@@ -152,14 +152,16 @@ export function SettlementLadder({
                 <Button
                   size="sm"
                   variant="primary"
+                  className="col-start-2 justify-self-start lg:col-start-auto lg:justify-self-end"
+                  disabled={Boolean(pendingKey)}
                   busy={pendingKey === step.action.key}
                   onClick={step.action.run}
                 >
                   {step.action.label}
                 </Button>
               ) : step.active ? (
-                <span className="text-mini text-ink-3">
-                  awaiting {partyLabel(step.controller)}
+                <span className="col-start-2 text-mini text-ink-3 lg:col-start-auto">
+                  Waiting for {partyLabel(step.controller)}
                 </span>
               ) : null}
             </li>

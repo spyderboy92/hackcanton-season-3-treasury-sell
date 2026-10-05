@@ -16,6 +16,7 @@ import { ReceiptTable } from '@/components/rfq/ReceiptTable';
 import { RfqBlotter } from '@/components/rfq/RfqBlotter';
 import { RfqTerms } from '@/components/rfq/RfqTerms';
 import { SettlementLadder } from '@/components/rfq/SettlementLadder';
+import { WorkflowGuide } from '@/components/rfq/WorkflowGuide';
 import { Spec } from '@/components/primitives/Spec';
 import type { CreateRfqCommand } from '@/lib/ledger/client';
 import { AUDITOR, TREASURY } from '@/lib/ledger/parties';
@@ -103,7 +104,7 @@ export function TreasuryDesk() {
         right={
           client.reset ? (
             <Button size="sm" variant="ghost" onClick={() => void client.reset?.()}>
-              Reset fixture
+              Reset demo
             </Button>
           ) : null
         }
@@ -114,8 +115,8 @@ export function TreasuryDesk() {
             <BlotterHeader
               title="Requests"
               actions={
-                <Button size="sm" variant={creating ? 'primary' : 'secondary'} onClick={openCreate}>
-                  New
+                <Button size="sm" variant="primary" disabled={Boolean(pending)} onClick={openCreate}>
+                  New RFQ
                 </Button>
               }
             />
@@ -139,7 +140,7 @@ export function TreasuryDesk() {
         {loading ? (
           <DeskLoading label="Reading the active contract set as Treasury…" />
         ) : creating || !view ? (
-          <div className="max-w-xl p-4">
+          <div className="mx-auto max-w-xl p-4">
             {!view && !creating ? (
               <EmptyState
                 headline="No request on the desk"
@@ -156,11 +157,13 @@ export function TreasuryDesk() {
                 busy={pending === 'create'}
                 error={error}
                 onDismissError={dismiss}
+                onCancel={() => { setCreating(false); dismiss(); }}
               />
             )}
           </div>
         ) : (
           <div className="space-y-4 pb-8">
+            <WorkflowGuide view={view} asParty={TREASURY.party} />
             <RfqTerms
               rfq={view.rfq}
               extra={
@@ -184,15 +187,15 @@ export function TreasuryDesk() {
             <div className="px-4">
               <Panel>
                 <PanelHeader
-                  title="Quote book"
+                  title="Compare dealer quotes"
                   meta={
                     spread
                       ? `Best to worst spread ${spread} bp`
-                      : 'Ranked best price first for this direction'
+                      : view.rfq.payload.side === 'Sell' ? 'Highest price first · you are selling' : 'Lowest price first · you are buying'
                   }
                   actions={
                     view.rfq.payload.status === 'Open' ? (
-                      <Button size="sm" variant="danger" busy={pending === 'cancel'} onClick={cancel}>
+                      <Button size="sm" variant="danger" disabled={Boolean(pending)} busy={pending === 'cancel'} onClick={cancel}>
                         Cancel RFQ
                       </Button>
                     ) : null
@@ -233,10 +236,9 @@ export function TreasuryDesk() {
               </div>
             ) : null}
 
-            <p className="max-w-[92ch] px-4 text-mini leading-relaxed text-ink-4">
-              Accepting a quote submits two sibling commands in one transaction: Accept on the
-              winning bilateral Quote, Close on the shared RFQ. Losing dealers are stakeholders on
-              the RFQ node alone, so the close reaches them and the acceptance does not.
+            <p className="max-w-[65ch] px-4 text-mini leading-relaxed text-ink-3">
+              Only you can compare all invited dealers’ quotes. After acceptance, other dealers
+              learn that the request closed; the selected dealer and price stay private.
             </p>
           </div>
         )}

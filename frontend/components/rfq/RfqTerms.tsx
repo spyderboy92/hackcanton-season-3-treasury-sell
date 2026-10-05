@@ -10,13 +10,13 @@ import { RfqRef } from './RfqRef';
 export function RfqTerms({ rfq, extra }: { rfq: Contract<Rfq>; extra?: React.ReactNode }) {
   const p = rfq.payload;
   return (
-    <div className="border-b border-line bg-surface px-4 py-3">
-      <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div className="mx-4 rounded-md border border-line bg-surface px-4 py-5 sm:px-5">
+      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-3">
         <SideTag side={p.side} />
-        <h1 className="flex items-baseline gap-2 text-xl font-semibold tracking-tight text-ink">
-          <Amount value={p.quantity} symbol={p.asset} className="text-xl" />
+        <h1 className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-2xl font-semibold tracking-tight text-ink">
+          <Amount value={p.quantity} symbol={p.asset} className="text-2xl" />
           <span className="text-ink-2">{p.asset}</span>
-          <span className="text-base font-normal text-ink-4">against {p.quoteCurrency}</span>
+          <span className="text-xs font-normal text-ink-3">quoted in {p.quoteCurrency}</span>
         </h1>
         <div className="ml-auto">
           <RfqStatusTag status={p.status} />
@@ -30,7 +30,7 @@ export function RfqTerms({ rfq, extra }: { rfq: Contract<Rfq>; extra?: React.Rea
           {p.status === 'Open' ? (
             <Countdown iso={p.quoteDeadline} className="text-xs" />
           ) : (
-            <span className="text-xs text-ink-4">window shut</span>
+            <span className="text-xs text-ink-3">Quote window ended</span>
           )}
         </Spec>
         <Spec label="Invited">
@@ -38,7 +38,7 @@ export function RfqTerms({ rfq, extra }: { rfq: Contract<Rfq>; extra?: React.Rea
           <span className="ml-1 text-ink-3">dealers</span>
         </Spec>
         <Spec label="Settlement">
-          <span className="text-xs text-ink-2">Delivery versus payment, atomic</span>
+          <span className="text-xs text-ink-2">Asset and payment exchanged together</span>
         </Spec>
         {extra}
       </SpecStrip>

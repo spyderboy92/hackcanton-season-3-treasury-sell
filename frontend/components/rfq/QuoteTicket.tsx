@@ -11,9 +11,8 @@ import { Timestamp } from '@/components/primitives/Timestamp';
 import { isDecimal, isPositive, multiply } from '@/lib/decimal';
 import type { Contract, Quote, Rfq, RfqInvitation } from '@/lib/ledger/types';
 
-type Mode = 'submit' | 'live' | 'revise' | 'closed';
+type Mode = 'submit' | 'live' | 'revise' | 'closed' | 'declined';
 
-/** The dealer's price entry. One number, and what it commits them to. */
 export function QuoteTicket({
   rfq,
   invitation,
@@ -46,7 +45,7 @@ export function QuoteTicket({
     setRevising(false);
   }, [quote?.contractId]);
 
-  const mode: Mode = !open ? 'closed' : quote ? (revising ? 'revise' : 'live') : 'submit';
+  const mode: Mode = !open ? 'closed' : quote ? (revising ? 'revise' : 'live') : invitation ? 'submit' : 'declined';
   const valid = isDecimal(price) && isPositive(price);
   const preview = valid ? multiply(p.quantity, price) : null;
   const verb = p.side === 'Sell' ? 'bid' : 'offer';
@@ -57,14 +56,14 @@ export function QuoteTicket({
         title={`Your ${verb}`}
         meta={
           open
-            ? `Bilateral with ${p.treasury.split('::')[0]} — no other dealer is on this contract`
+            ? `Private between your desk and ${p.treasury.split('::')[0]}`
             : 'This RFQ is no longer accepting prices'
         }
       />
       <PanelBody className="space-y-3">
         {mode === 'live' && quote ? (
           <>
-            <div className="flex items-end justify-between gap-4 border-l-2 border-accent bg-accent-wash px-3 py-2.5">
+            <div className="flex flex-wrap items-end justify-between gap-4 rounded-xs bg-accent-wash px-4 py-4">
               <div>
                 <span className="label mb-0.5 block">Standing {verb}</span>
                 <Amount
@@ -89,6 +88,7 @@ export function QuoteTicket({
               <div className="flex gap-1.5">
                 <Button
                   size="sm"
+                  disabled={Boolean(pendingKey)}
                   onClick={() => {
                     setPrice(quote.payload.price);
                     setRevising(true);
@@ -99,6 +99,7 @@ export function QuoteTicket({
                 <Button
                   size="sm"
                   variant="danger"
+                  disabled={Boolean(pendingKey)}
                   busy={pendingKey === 'withdraw'}
                   onClick={onWithdraw}
                 >
@@ -110,7 +111,12 @@ export function QuoteTicket({
         ) : null}
 
         {mode === 'submit' || mode === 'revise' ? (
-          <>
+          <form className="space-y-4" onSubmit={(event) => {
+            event.preventDefault();
+            if (!valid || pendingKey) return;
+            if (mode === 'revise') onRevise(price);
+            else onSubmit(price);
+          }}>
             <Field
               label={`Price per ${p.asset} in ${p.quoteCurrency}`}
               hint={
@@ -121,14 +127,15 @@ export function QuoteTicket({
                     {p.asset}
                   </>
                 ) : (
-                  'Decimal, exact. Never rounded through a float.'
+                  'Enter a positive unit price to see the total value.'
                 )
               }
             >
               <TextInput
                 mono
-                autoFocus
                 inputMode="decimal"
+                disabled={Boolean(pendingKey)}
+                aria-invalid={price.length > 0 && !valid}
                 placeholder="0.00"
                 value={price}
                 suffix={p.quoteCurrency}
@@ -141,24 +148,26 @@ export function QuoteTicket({
 
             <div className="flex gap-1.5">
               <Button
+                type="submit"
                 variant="primary"
                 className="flex-1"
-                disabled={!valid}
+                disabled={!valid || Boolean(pendingKey)}
                 busy={pendingKey === 'submit' || pendingKey === 'revise'}
-                onClick={() => (mode === 'revise' ? onRevise(price) : onSubmit(price))}
               >
                 {mode === 'revise' ? 'Replace standing price' : `Submit ${verb}`}
               </Button>
               {mode === 'revise' ? (
-                <Button onClick={() => setRevising(false)}>Cancel</Button>
+                <Button type="button" disabled={Boolean(pendingKey)} onClick={() => setRevising(false)}>Cancel</Button>
               ) : invitation ? (
-                <Button variant="ghost" busy={pendingKey === 'decline'} onClick={onDecline}>
+                <Button type="button" variant="ghost" disabled={Boolean(pendingKey)} busy={pendingKey === 'decline'} onClick={onDecline}>
                   Decline
                 </Button>
               ) : null}
             </div>
-          </>
+          </form>
         ) : null}
+
+        {mode === 'declined' ? <p className="text-xs text-ink-2">You declined this invitation. There is no active price to submit.</p> : null}
 
         {mode === 'closed' ? (
           quote ? (

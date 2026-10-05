@@ -138,8 +138,8 @@ export function SplitDemo() {
 
   return (
     <AppShell>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line bg-sunken px-4 py-2.5">
-        <div className="flex items-center gap-2.5">
+      <div className="grid grid-cols-1 items-center gap-4 border-b border-line bg-sunken px-4 py-4 xl:grid-cols-[auto_minmax(0,1fr)_auto]">
+        <div className="flex flex-wrap items-center gap-2.5">
           {tView ? <SideTag side={tView.rfq.payload.side} /> : null}
           <span className="text-sm font-semibold tracking-tight text-ink">
             {tView ? (
@@ -155,9 +155,9 @@ export function SplitDemo() {
           {tView ? <RfqStatusTag status={tView.rfq.payload.status} /> : null}
         </div>
 
-        <p className="min-w-0 flex-1 text-mini leading-snug text-ink-2">{NARRATIVE[stage]}</p>
+        <p className="min-w-0 max-w-[65ch] text-xs leading-relaxed text-ink-2">{NARRATIVE[stage]}</p>
 
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           {stage === 'settled' ? (
             <span className="num text-mini text-pos">DvP COMPLETE</span>
           ) : (
@@ -344,8 +344,8 @@ function OutcomeStrip({
   return (
     <div
       className={cn(
-        'flex flex-wrap items-center gap-x-4 gap-y-1 border-t-2 px-4 py-3',
-        tone === 'good' ? 'border-t-pos bg-pos-wash' : 'border-t-line-hi bg-raised',
+        'flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-line px-4 py-3',
+        tone === 'good' ? 'bg-pos-wash' : 'bg-raised',
       )}
     >
       <span className={cn('text-xs font-medium', tone === 'good' ? 'text-pos' : 'text-ink-2')}>

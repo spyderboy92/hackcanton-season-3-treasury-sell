@@ -32,7 +32,7 @@ export function EntitlementMatrix({ rows }: { rows: EntitlementRow[] }) {
         {rows.map((row) => (
           <tr
             key={row.template}
-            className={cn('border-l-2', row.entitled ? 'border-l-pos' : 'border-l-transparent')}
+            className={cn(row.entitled && 'bg-pos-wash')}
           >
             <Td>
               <span className={cn('num text-xs', row.entitled ? 'text-ink' : 'text-ink-3')}>

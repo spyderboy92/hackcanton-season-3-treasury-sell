@@ -1,40 +1,31 @@
 @import "tailwindcss";
 
-/* ──────────────────────────────────────────────────────────────────────
-   Treasury RFQ — design tokens
-
-   Canvas: cool blue-black. Structure comes from 1px hairlines, never shadow.
-   Accent: brass. One hue, used only for focus, selection and the best price.
-   Semantic colour is rationed: green means economically good, red means a
-   destructive command. Everything else is greyscale.
-   ────────────────────────────────────────────────────────────────────── */
-
 :root,
 [data-theme="dark"] {
   color-scheme: dark;
 
-  --canvas: #0a0c10;
-  --sunken: #07080b;
-  --surface: #0e1116;
-  --raised: #141922;
-  --line: #1b2029;
-  --line-hi: #2b3341;
+  --canvas: #101318;
+  --sunken: #0c0f14;
+  --surface: #171c24;
+  --raised: #202733;
+  --line: #303947;
+  --line-hi: #526073;
   --line-quiet: #12161d;
 
-  --ink: #e9edf3;
-  --ink-2: #97a1b1;
-  --ink-3: #5f6a7a;
-  --ink-4: #3b4351;
+  --ink: #edf1f7;
+  --ink-2: #bcc6d5;
+  --ink-3: #a3afc0;
+  --ink-4: #94a1b4;
 
-  --accent: #c8a45c;
-  --accent-hi: #e3c684;
+  --accent: #d7b777;
+  --accent-hi: #ebce94;
   --accent-line: #6a5527;
   --accent-wash: rgb(200 164 92 / 0.09);
-  --accent-ink: #14110a;
+  --accent-ink: #171208;
 
-  --pos: #5cb08c;
+  --pos: #79cba7;
   --pos-wash: rgb(92 176 140 / 0.11);
-  --neg: #d4685a;
+  --neg: #f19588;
   --neg-wash: rgb(212 104 90 / 0.11);
 
   --sealed: repeating-linear-gradient(
@@ -47,26 +38,26 @@
 [data-theme="light"] {
   color-scheme: light;
 
-  --canvas: #f0f1f3;
-  --sunken: #e4e6ea;
+  --canvas: #f3f4f6;
+  --sunken: #e9ecf0;
   --surface: #ffffff;
-  --raised: #f6f7f9;
-  --line: #d9dce2;
-  --line-hi: #b6bcc6;
+  --raised: #f0f2f5;
+  --line: #d8dde5;
+  --line-hi: #8793a3;
   --line-quiet: #e8eaee;
 
-  --ink: #0d1117;
-  --ink-2: #4e5766;
-  --ink-3: #78818f;
-  --ink-4: #a6adb8;
+  --ink: #18212e;
+  --ink-2: #475569;
+  --ink-3: #526176;
+  --ink-4: #5e6c80;
 
-  --accent: #8b5e12;
-  --accent-hi: #6e4909;
+  --accent: #80550d;
+  --accent-hi: #684307;
   --accent-line: #cfa851;
   --accent-wash: rgb(139 94 18 / 0.08);
   --accent-ink: #fffaf0;
 
-  --pos: #1c7a56;
+  --pos: #146b49;
   --pos-wash: rgb(28 122 86 / 0.09);
   --neg: #ab3527;
   --neg-wash: rgb(171 53 39 / 0.09);
@@ -103,31 +94,30 @@
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, "SF Mono", monospace;
 
-  /* Dense scale. Everything is small; hierarchy comes from weight and colour. */
-  --text-micro: 0.625rem;
-  --text-micro--line-height: 0.875rem;
-  --text-mini: 0.6875rem;
-  --text-mini--line-height: 1rem;
-  --text-xs: 0.75rem;
-  --text-xs--line-height: 1.0625rem;
-  --text-sm: 0.8125rem;
-  --text-sm--line-height: 1.1875rem;
-  --text-base: 0.875rem;
-  --text-base--line-height: 1.375rem;
-  --text-lg: 1rem;
-  --text-lg--line-height: 1.5rem;
-  --text-xl: 1.1875rem;
-  --text-xl--line-height: 1.5rem;
-  --text-2xl: 1.5rem;
-  --text-2xl--line-height: 1.75rem;
-  --text-3xl: 2rem;
-  --text-3xl--line-height: 2.125rem;
-  --text-4xl: 2.75rem;
-  --text-4xl--line-height: 2.75rem;
+  --text-micro: 0.6875rem;
+  --text-micro--line-height: 1rem;
+  --text-mini: 0.75rem;
+  --text-mini--line-height: 1.125rem;
+  --text-xs: 0.8125rem;
+  --text-xs--line-height: 1.25rem;
+  --text-sm: 0.875rem;
+  --text-sm--line-height: 1.375rem;
+  --text-base: 1rem;
+  --text-base--line-height: 1.5rem;
+  --text-lg: 1.125rem;
+  --text-lg--line-height: 1.625rem;
+  --text-xl: 1.375rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.75rem;
+  --text-2xl--line-height: 2.125rem;
+  --text-3xl: 2.25rem;
+  --text-3xl--line-height: 2.5rem;
+  --text-4xl: 3rem;
+  --text-4xl--line-height: 3.25rem;
 
-  --radius-xs: 1px;
-  --radius-sm: 2px;
-  --radius-md: 3px;
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
 }
 
 @layer base {
@@ -143,13 +133,12 @@
     background: var(--canvas);
     color: var(--ink);
     font-family: var(--font-sans);
-    font-size: 0.8125rem;
-    line-height: 1.45;
+    font-size: var(--text-sm);
+    line-height: 1.6;
     letter-spacing: -0.004em;
     -webkit-font-smoothing: antialiased;
   }
 
-  /* Prices, sizes and party ids all line up. */
   .num,
   code,
   kbd,
@@ -166,8 +155,8 @@
   }
 
   :focus-visible {
-    outline: 1px solid var(--accent);
-    outline-offset: 1px;
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
   }
 
   input,
@@ -200,15 +189,14 @@
 }
 
 @layer utilities {
-  /* Field labels: small, spaced, sentence case. Never shouted. */
   .label {
-    font-size: var(--text-micro);
-    line-height: 1rem;
-    letter-spacing: 0.06em;
+    font-size: var(--text-mini);
+    line-height: 1.125rem;
+    font-weight: 500;
+    letter-spacing: 0.015em;
     color: var(--ink-3);
   }
 
-  /* Redacted cell: something exists here that this party is not on. */
   .sealed {
     background-image: var(--sealed);
   }
@@ -222,16 +210,13 @@
 
   @keyframes mark {
     from {
-      background-color: var(--accent-wash);
-      box-shadow: inset 2px 0 0 var(--accent);
+      opacity: 0.5;
     }
     to {
-      background-color: transparent;
-      box-shadow: inset 2px 0 0 transparent;
+      opacity: 1;
     }
   }
 
-  /* A quote landing should register, not perform. */
   .mark-in {
     animation: mark 1100ms ease-out both;
   }
@@ -251,9 +236,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .mark-in,
-    .breathe {
-      animation: none;
+    *,
+    *::before,
+    *::after {
+      animation: none !important;
+      transition: none !important;
     }
   }
 }

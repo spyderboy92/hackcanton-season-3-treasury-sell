@@ -15,6 +15,7 @@ import { QuoteTicket } from '@/components/rfq/QuoteTicket';
 import { RfqBlotter } from '@/components/rfq/RfqBlotter';
 import { RfqTerms } from '@/components/rfq/RfqTerms';
 import { SettlementLadder } from '@/components/rfq/SettlementLadder';
+import { WorkflowGuide } from '@/components/rfq/WorkflowGuide';
 import type { PartyInfo } from '@/lib/ledger/parties';
 import { useCommand, useDesk, useLedger } from '@/lib/ledger/provider';
 import { defaultRfqId, filledLeg, holdingFor, rfqView } from '@/lib/ledger/view';
@@ -120,6 +121,7 @@ export function DealerDesk({ info }: { info: PartyInfo }) {
           />
         ) : (
           <div className="space-y-4 pb-8">
+            <WorkflowGuide view={view} asParty={info.party} />
             <RfqTerms rfq={view.rfq} />
 
             {error && !['submit', 'revise'].includes(pending ?? '') ? (
@@ -134,6 +136,7 @@ export function DealerDesk({ info }: { info: PartyInfo }) {
                   <DealerOutcome view={view} />
                 ) : (
                   <QuoteTicket
+                    key={view.rfq.payload.rfqId}
                     rfq={view.rfq}
                     invitation={view.invitation}
                     quote={ownQuote}
@@ -150,7 +153,7 @@ export function DealerDesk({ info }: { info: PartyInfo }) {
 
               <Panel>
                 <PanelHeader
-                  title="Quote book"
+                  title="Your private quote book"
                   meta={`${visiblePrices} of ${view.rfq.payload.invitedDealers.length} prices in this party's view`}
                   actions={
                     <span className="num text-mini text-ink-4">

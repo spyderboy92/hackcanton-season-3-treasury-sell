@@ -14,7 +14,7 @@ export function Panel({
   return (
     <section
       className={cn(
-        'border border-line',
+        '@container min-w-0 overflow-hidden rounded-md border border-line',
         tone === 'sunken' ? 'bg-sunken' : 'bg-surface',
         className,
       )}
@@ -38,17 +38,17 @@ export function PanelHeader({
   return (
     <header
       className={cn(
-        'flex min-h-9 items-center gap-3 border-b border-line px-3 py-1.5',
+        'flex min-h-14 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-3',
         className,
       )}
     >
-      <h2 className="text-xs font-medium tracking-tight text-ink">{title}</h2>
-      {meta ? <div className="min-w-0 flex-1 text-mini text-ink-3">{meta}</div> : <div className="flex-1" />}
+      <h2 className="min-w-0 flex-1 text-sm font-semibold tracking-tight text-ink @min-[36rem]:flex-none">{title}</h2>
+      {meta ? <div className="order-3 basis-full text-mini text-ink-3 @min-[36rem]:order-none @min-[36rem]:min-w-0 @min-[36rem]:flex-1 @min-[36rem]:basis-auto">{meta}</div> : <div className="flex-1" />}
       {actions ? <div className="flex shrink-0 items-center gap-1.5">{actions}</div> : null}
     </header>
   );
 }
 
 export function PanelBody({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cn('p-3', className)}>{children}</div>;
+  return <div className={cn('p-4', className)}>{children}</div>;
 }

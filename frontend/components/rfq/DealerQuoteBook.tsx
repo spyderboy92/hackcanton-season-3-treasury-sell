@@ -11,13 +11,6 @@ import { institutionOf, partyLabel } from '@/lib/ledger/parties';
 import type { Contract, Party, Quote, Rfq } from '@/lib/ledger/types';
 import type { FilledLeg } from '@/lib/ledger/view';
 
-/**
- * The same book, from a dealer's seat. Deliberately the same columns as the
- * treasury view so the redactions line up with the data they replace.
- *
- * The dealer knows who else was invited — `invitedDealers` is a field on the
- * shared RFQ it observes. It does not and cannot know their prices.
- */
 export function DealerQuoteBook({
   rfq,
   dealer,
@@ -40,17 +33,17 @@ export function DealerQuoteBook({
     <Table>
       <thead>
         <tr>
-          <Th className="w-8">#</Th>
+          <Th className="hidden w-8 @min-[36rem]:table-cell">#</Th>
           <Th>Dealer</Th>
-          <Th className="hidden lg:table-cell">Party</Th>
+          <Th className="hidden @min-[54rem]:table-cell">Party</Th>
           <Th align="right">Price {quoteCurrency}</Th>
-          <Th align="right" className="hidden sm:table-cell">
+          <Th align="right" className="hidden @min-[36rem]:table-cell">
             Notional {quoteCurrency}
           </Th>
-          <Th align="right" className="hidden md:table-cell">
+          <Th align="right" className="hidden @min-[48rem]:table-cell">
             vs best
           </Th>
-          <Th align="right" className="hidden md:table-cell">
+          <Th align="right" className="hidden @min-[60rem]:table-cell">
             Received
           </Th>
         </tr>
@@ -62,19 +55,18 @@ export function DealerQuoteBook({
             <tr
               key={party}
               className={cn(
-                'border-l-2',
                 own
                   ? ownFill
-                    ? 'border-l-pos bg-pos-wash'
-                    : 'border-l-accent bg-accent-wash'
-                  : 'border-l-transparent',
+                    ? 'bg-pos-wash'
+                    : 'bg-accent-wash'
+                  : '',
               )}
             >
-              <Td num className="text-ink-4">
+              <Td num className="hidden text-ink-4 @min-[36rem]:table-cell">
                 —
               </Td>
               <Td>
-                <div className="flex items-baseline gap-2">
+                <div className="flex flex-wrap items-baseline gap-x-2">
                   <span className={cn('font-medium whitespace-nowrap', own ? 'text-ink' : 'text-ink-3')}>
                     {partyLabel(party)}
                   </span>
@@ -89,9 +81,9 @@ export function DealerQuoteBook({
                     </span>
                   ) : null}
                 </div>
-                <div className="whitespace-nowrap text-mini text-ink-4">{institutionOf(party)}</div>
+                <div className="text-mini text-ink-4">{institutionOf(party)}</div>
               </Td>
-              <Td className="hidden lg:table-cell">
+              <Td className="hidden @min-[54rem]:table-cell">
                 <PartyId party={party} />
               </Td>
               <Td align="right">
@@ -114,7 +106,7 @@ export function DealerQuoteBook({
                   </span>
                 )}
               </Td>
-              <Td align="right" className="hidden sm:table-cell">
+              <Td align="right" className="hidden @min-[36rem]:table-cell">
                 {own ? (
                   ownPrice ? (
                     <Amount value={multiply(quantity, ownPrice)} dp={2} className="text-ink-2" />
@@ -127,10 +119,10 @@ export function DealerQuoteBook({
                   </span>
                 )}
               </Td>
-              <Td align="right" className="hidden md:table-cell">
+              <Td align="right" className="hidden @min-[48rem]:table-cell">
                 <span className="text-ink-4">—</span>
               </Td>
-              <Td align="right" className="hidden md:table-cell">
+              <Td align="right" className="hidden @min-[60rem]:table-cell">
                 {own && ownAt ? (
                   <Timestamp iso={ownAt} />
                 ) : (
@@ -142,9 +134,8 @@ export function DealerQuoteBook({
         })}
       </tbody>
       <caption className="caption-bottom px-3 py-2 text-left text-mini text-ink-4">
-        Hatched cells are contracts this party is not a stakeholder on. They are absent from its
-        active contract set, not hidden by this interface. Ranking needs every price, so it cannot
-        be computed here.
+        Hatched cells mean this desk cannot read that dealer’s quote from the ledger.
+        Only the treasury can compare prices.
       </caption>
     </Table>
   );
