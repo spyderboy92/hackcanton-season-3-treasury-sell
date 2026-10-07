@@ -4,9 +4,22 @@
  * A Canton party id is `<hint>-<disambiguator>::<fingerprint>` and the
  * fingerprint is the participant's namespace key — it changes with every fresh
  * sandbox. Hardcoding one guarantees a broken demo on the next restart, so the
- * ids are looked up at runtime by their id hint, which `Demo.Bootstrap`
- * allocates deterministically (Treasury, DealerA, DealerB, DealerC, Auditor,
- * Registry).
+ * ids are looked up at runtime.
+ *
+ * Three sources, strongest last:
+ *
+ *   1. id-hint matching over the participant's party list (Treasury, DealerA,
+ *      DealerB, DealerC, Auditor, Registry — what `Demo.Bootstrap` allocates);
+ *   2. the operator's `PartyProfile` contracts (`TreasuryRfq.Accounts`), which
+ *      bind each seat to a party explicitly and carry its label and
+ *      institution. Preferred over hints because they say which party the
+ *      seed MEANT, rather than guessing from a suffix;
+ *   3. `LEDGER_PARTY_*` overrides, which always win.
+ *
+ * The operator is resolved the same way (hint `Operator`, override
+ * `LEDGER_PARTY_OPERATOR`) but is NOT a demo role: no desk acts as it and it is
+ * never sent to the browser. It is the identity the server uses to read the
+ * directory and the login accounts — see `resolveOperator`.
  *
  * If a role cannot be resolved the placeholder id survives. That is a visibly
  * empty desk rather than a crashed app, which is the right failure for a demo.
@@ -18,17 +31,21 @@ import { ledgerBackend } from '../config';
 import {
   PARTY_HINTS,
   PLACEHOLDER_PARTY_IDS,
+  applyPartyDirectory,
   applyPartyIds,
   type DemoRole,
+  type DirectoryEntry,
 } from '../parties';
 import type { Party } from '../types';
-import { listParties } from './json-api';
+import { activeContracts, ledgerEnd, listParties } from './json-api';
 
 export interface ResolvedParties {
   ids: Record<DemoRole, Party>;
   /** Roles that had no party on the participant. Empty on a healthy sandbox. */
   unresolved: DemoRole[];
   source: 'mock' | 'participant';
+  /** Labels from the operator's PartyProfiles. Empty in mock mode or without profiles. */
+  directory: Partial<Record<DemoRole, DirectoryEntry>>;
 }
 
 const ENV_OVERRIDE: Record<DemoRole, string> = {
@@ -40,15 +57,46 @@ const ENV_OVERRIDE: Record<DemoRole, string> = {
   registry: 'LEDGER_PARTY_REGISTRY',
 };
 
+/** The app operator: signatory of the directory and of every login account. */
+const OPERATOR_HINT = 'Operator';
+const OPERATOR_OVERRIDE = 'LEDGER_PARTY_OPERATOR';
+
 const ROLES = Object.keys(PARTY_HINTS) as DemoRole[];
 
 /** Re-listing parties on every render would be silly; they change rarely. */
 const TTL_MS = 5_000;
-let cached: { at: number; value: ResolvedParties } | null = null;
 
+interface Resolution {
+  parties: ResolvedParties;
+  operator: Party | null;
+}
+
+let cached: { at: number; value: Resolution } | null = null;
+
+/**
+ * The demo roles' party ids and directory labels. Applies both to this
+ * process's copy of `lib/ledger/parties.ts` as a side effect, exactly as
+ * before, so server components render live values.
+ */
 export async function resolveDemoParties(): Promise<ResolvedParties> {
+  return (await resolve()).parties;
+}
+
+/**
+ * The operator party, or null if the participant has none (a ledger seeded
+ * before HAC-13, or an unreachable one). SERVER ONLY — never serialise it into
+ * a response or a prop.
+ */
+export async function resolveOperator(): Promise<Party | null> {
+  return (await resolve()).operator;
+}
+
+async function resolve(): Promise<Resolution> {
   if (ledgerBackend() === 'mock') {
-    return { ids: { ...PLACEHOLDER_PARTY_IDS }, unresolved: [], source: 'mock' };
+    return {
+      parties: { ids: { ...PLACEHOLDER_PARTY_IDS }, unresolved: [], source: 'mock', directory: {} },
+      operator: null,
+    };
   }
 
   // Reading the participant makes any page that renders a party id
@@ -56,9 +104,9 @@ export async function resolveDemoParties(): Promise<ResolvedParties> {
   // prerender it and then bailing out through a thrown fetch.
   await connection();
 
-  const fresh = cached && Date.now() - cached.at < TTL_MS && cached.value.unresolved.length === 0;
+  const fresh = cached && Date.now() - cached.at < TTL_MS;
   if (fresh && cached) {
-    applyPartyIds(cached.value.ids);
+    apply(cached.value.parties);
     return cached.value;
   }
 
@@ -68,28 +116,72 @@ export async function resolveDemoParties(): Promise<ResolvedParties> {
   let allocated: Party[] = [];
   try {
     // Pinned roles avoid party-list permissions on managed participants.
-    if (ROLES.some((role) => !process.env[ENV_OVERRIDE[role]])) {
+    if ([...ROLES.map((r) => ENV_OVERRIDE[r]), OPERATOR_OVERRIDE].some((name) => !process.env[name])) {
       allocated = (await listParties()).map((p) => p.party);
     }
   } catch (cause) {
     console.warn('[ledger] could not list parties; falling back to placeholder ids', cause);
   }
 
+  const operator = process.env[OPERATOR_OVERRIDE]?.trim() || pick(allocated, OPERATOR_HINT) || null;
+  const profiles = operator ? await readProfiles(operator) : {};
+
+  const directory: Partial<Record<DemoRole, DirectoryEntry>> = {};
   for (const role of ROLES) {
+    const profile = profiles[role];
+    if (profile) directory[role] = { label: profile.label, institution: profile.institution };
+
     const override = process.env[ENV_OVERRIDE[role]];
-    if (override) {
-      ids[role] = override;
-      continue;
-    }
-    const match = pick(allocated, PARTY_HINTS[role]);
+    const match = override || profile?.party || pick(allocated, PARTY_HINTS[role]);
     if (match) ids[role] = match;
     else unresolved.push(role);
   }
 
-  const value: ResolvedParties = { ids, unresolved, source: 'participant' };
-  applyPartyIds(ids);
-  cached = { at: Date.now(), value };
+  const value: Resolution = { parties: { ids, unresolved, source: 'participant', directory }, operator };
+  apply(value.parties);
+  // A partial answer (participant still booting, seed still running) is not
+  // cached, so the next request tries again instead of serving it for 5s.
+  if (unresolved.length === 0) cached = { at: Date.now(), value };
   return value;
+}
+
+function apply(parties: ResolvedParties): void {
+  applyPartyIds(parties.ids);
+  applyPartyDirectory(parties.directory);
+}
+
+interface Profile extends DirectoryEntry {
+  party: Party;
+}
+
+/**
+ * The operator's PartyProfiles, by seat. Read AS THE OPERATOR — the only party
+ * that is a stakeholder on all of them (each profile is also observed by the
+ * party it describes, and by nobody else). A failed read degrades to hint
+ * matching rather than failing the render.
+ */
+async function readProfiles(operator: Party): Promise<Partial<Record<DemoRole, Profile>>> {
+  try {
+    const offset = await ledgerEnd();
+    const events = await activeContracts(operator, ['PartyProfile'], offset);
+    const bySeat: Partial<Record<DemoRole, Profile & { offset: number }>> = {};
+    for (const event of events) {
+      const a = event.createArgument;
+      if (a.operator !== operator) continue;
+      const seat = a.seat;
+      if (typeof seat !== 'string' || !(ROLES as string[]).includes(seat)) continue;
+      if (typeof a.party !== 'string' || typeof a.label !== 'string' || typeof a.institution !== 'string') continue;
+      // Should be one per seat. If a re-run left two, the newer one is the
+      // seed's current intent — the same rule as hint suffixes.
+      const prior = bySeat[seat as DemoRole];
+      if (prior && prior.offset > event.offset) continue;
+      bySeat[seat as DemoRole] = { party: a.party, label: a.label, institution: a.institution, offset: event.offset };
+    }
+    return bySeat;
+  } catch (cause) {
+    console.warn('[ledger] could not read the party directory; falling back to id hints', cause);
+    return {};
+  }
 }
 
 /**

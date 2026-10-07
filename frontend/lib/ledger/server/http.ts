@@ -8,6 +8,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { AuthError } from '../../auth/server/policy';
 import { LedgerError, type LedgerErrorCode } from '../client';
 import type { WireError } from '../wire';
 
@@ -21,6 +22,14 @@ const STATUS: Record<LedgerErrorCode, number> = {
 };
 
 export function errorResponse(cause: unknown): NextResponse<WireError> {
+  // No session (401) or a session acting outside its seat (403). Same wire
+  // shape as a ledger rejection, so the desk renders it the same way.
+  if (cause instanceof AuthError) {
+    return NextResponse.json(
+      { error: { code: 'NOT_AUTHORIZED', message: cause.message } },
+      { status: cause.status },
+    );
+  }
   const error =
     cause instanceof LedgerError
       ? cause

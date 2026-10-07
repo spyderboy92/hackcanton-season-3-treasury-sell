@@ -8,7 +8,8 @@ changing code.
 A losing dealer must never be able to learn the winner or the winning price, and
 that must be true because the ledger will not serve it — not because a component
 filtered it out. Section 3 lists the rules that guarantee it. Read section 3
-before editing `daml/` or `frontend/lib/ledger/`.
+before editing `daml/` or `frontend/lib/ledger/`. Section 6 "Accounts and sessions"
+is the matching read for `frontend/lib/auth/` and `frontend/middleware.ts`.
 
 ---
 
@@ -29,14 +30,16 @@ signatories and observers, enforced by the participant.
 | Path | Contents |
 | --- | --- |
 | `daml/` | The contract model package (`treasury-rfq`, version `0.0.1`). `daml/daml.yaml` pins SDK 3.5.1, deps `daml-prim` + `daml-stdlib` only. |
-| `daml/daml/TreasuryRfq/*.daml` | 5 modules, 587 lines, 8 templates, 11 business choices. **The comments are load-bearing** — they record why each shape was chosen and what breaks if it changes. |
+| `daml/daml/TreasuryRfq/*.daml` | 6 modules, 722 lines, 11 templates, 12 business choices. **The comments are load-bearing** — they record why each shape was chosen and what breaks if it changes. |
 | `daml-test/` | The test package (`treasury-rfq-tests`), `data-dependencies` on the built DAR of `daml/`. Depends on `daml-script`. |
 | `daml-test/daml/Tests.daml` | Suite index and map, plus two aggregate entry points (`privacySuite`, `fullSuite`) for running against a real ledger. |
-| `daml-test/daml/Tests/*.daml` | `Fixtures`, `Assertions`, `Lifecycle`, `Privacy`, `Authorization`, `Settlement`. |
-| `daml-test/daml/Demo/Bootstrap.daml` | **Not a test.** Seeds a live sandbox with the demo scenario and stops before the first quote. Prints party ids for the frontend. |
+| `daml-test/daml/Tests/*.daml` | `Fixtures`, `Assertions`, `Lifecycle`, `Privacy`, `Authorization`, `Settlement`, `Accounts`. |
+| `daml-test/daml/Demo/Bootstrap.daml` | **Not a test.** Seeds a live sandbox with the demo scenario and stops before the first quote; then allocates `Operator`, the account directory, six `PartyProfile`s and the five demo logins. Prints party ids and usernames. |
 | `multi-package.yaml` | `sdk-version: 3.5.1`; packages `./daml`, `./daml-test`. This is what `dpm build --all` reads. |
-| `frontend/app/` | Next.js 15 App Router. 11 route files: 5 pages + `layout.tsx` + `not-found.tsx` + 4 API route handlers under `app/api/ledger/`. |
-| `frontend/components/` | `desks/` (one per party), `rfq/` (blotter, quote book, ladder, tape…), `shell/`, `primitives/`, `demo/`. |
+| `frontend/app/` | Next.js 15 App Router. 17 route files: 7 pages (incl. `login/`, `signup/`) + `layout.tsx` + `not-found.tsx` + 8 API route handlers — 4 under `app/api/ledger/`, 4 under `app/api/auth/` (`login`, `signup`, `logout`, `session`). |
+| `frontend/middleware.ts` | Page routing by session (Node runtime): anonymous → `/login`, wrong desk → own desk, `/api/*` without a session → 401. Not the privacy boundary — see section 6. |
+| `frontend/components/` | `desks/` (one per party), `rfq/` (blotter, quote book, ladder, tape…), `shell/` (incl. `UserMenu`), `primitives/`, `demo/`, `auth/` (login/signup forms). |
+| `frontend/lib/auth/` | `access.ts` (account shape, `canOpen`/`homeFor`/`navFor`; client-safe), `validate.ts`, `SessionProvider.tsx`. `server/` is **SERVER ONLY**: `session.ts` (signed cookie), `password.ts` (scrypt), `accounts.ts` (ledger/memory account stores), `policy.ts` (`allowedParties`), `rate-limit.ts`, `request.ts`. |
 | `frontend/lib/ledger/` | The ledger seam: `client.ts` (interface), `mock.ts`, `canton.ts`, `index.ts` (factory), `types.ts`, `wire.ts`, `parties.ts`, `provider.tsx`, `selectors.ts`, `view.ts`, `config.ts`. |
 | `frontend/lib/ledger/server/` | **SERVER ONLY.** `json-api.ts` (Canton JSON Ledger API v2 adapter), `ledger.ts` (command/query mapping), `parties.ts` (runtime party resolution), `decode.ts`, `http.ts`. Never import these from a component. |
 | `frontend/lib/decimal.ts` | BigInt-backed decimal string arithmetic. Money never becomes a float. |
@@ -62,6 +65,8 @@ Acyclic. Arrows point from importer to imported.
         |              |
         v              |
        Rfq ------------+          (imports Types)
+
+     Accounts                     (imports only DA.List, DA.Text — outside the RFQ DAG)
 ```
 
 Concretely:
@@ -73,6 +78,7 @@ Concretely:
 | `TreasuryRfq.Rfq` | `Types` | `RFQ`, `RfqFill` |
 | `TreasuryRfq.Settlement` | `Holding`, `Types` | `AcceptedTrade`, `SettlementInstruction`, `SettlementReceipt` |
 | `TreasuryRfq.Quoting` | `Rfq` (for `RfqFill`), `Settlement` (for `AcceptedTrade`), `Types` | `RfqInvitation`, `Quote` |
+| `TreasuryRfq.Accounts` | — (stdlib only) | `PartyProfile`, `AccountDirectory`, `UserAccount` |
 
 **Why `Quoting` holds two templates.** `RfqInvitation` and `Quote` are mutually
 recursive at the type level: `RfqInvitation.SubmitQuote` returns
@@ -88,6 +94,13 @@ the terminal state of that same lifecycle and belongs with them.
 `Holding` stands alone deliberately: it references nothing else in the model, so
 a live CIP-56 registry adapter can replace it without touching `Rfq`, `Quoting`
 or `Settlement`.
+
+`Accounts` stands alone for a stronger reason: nothing in the RFQ model imports it
+and it imports nothing from it, and its contracts are signed by a separate
+`Operator` party that is a stakeholder on no auction contract. Adding or changing
+accounts therefore cannot change who sees a price. Keep it that way — an RFQ
+template that fetched a `UserAccount` would make the operator an informee of the
+auction.
 
 ---
 
@@ -109,14 +122,25 @@ scenario, and serves the UI.
 | localhost:6864 | Canton JSON Ledger API v2 |
 | localhost:6865 | Canton gRPC Ledger API |
 
+Every page needs a login. Demo accounts, password = username: `treasury`,
+`dealer-a`, `dealer-b`, `dealer-c`, `auditor`. They are seeded on-ledger by
+`Demo.Bootstrap`, so they — and any signups and trades — survive app and
+container restarts along with the rest of the volume.
+
 | Command | Effect |
 | --- | --- |
 | `docker compose up` | build + run in the foreground |
 | `docker compose up -d` | detached |
 | `docker compose logs -f` | follow logs |
-| `docker compose down` | stop; ledger state survives in the volume |
-| `docker compose down -v` | stop and **wipe ledger state** (fresh party ids on the next `up`) |
-| `docker compose run --rm tests` | run the 59-script Daml test suite |
+| `docker compose down` | stop; ledger state (trades, accounts) survives in the volume |
+| `docker compose down -v` | stop and **wipe ledger state** (fresh party ids, fresh demo accounts on the next `up`) |
+| `docker compose run --rm tests` | run the 74-script Daml test suite |
+| `SESSION_SECRET=$(openssl rand -base64 48) docker compose up` | keep users signed in across container restarts (see section 9) |
+
+**A volume seeded before the accounts work needs `docker compose down -v` once.**
+It has no `Operator` party and no directory, so logins fail with "The ledger has
+no account directory", and the rebuilt DAR is refused as `KNOWN_PACKAGE_VERSION`
+(below) anyway.
 
 The toolchain image installs `dpm` and then explicitly `dpm install 3.5.1`
 because the installer pulls the latest SDK — see the trap below; the same trap
@@ -131,7 +155,7 @@ curl https://get.digitalasset.com/install/install.sh | sh
 export PATH="$HOME/.dpm/bin:$PATH"      # trap 1 — the installer does NOT do this
 dpm install 3.5.1                       # trap 2 — installer pulls latest; repo pins 3.5.1
 dpm build --all                         # builds both packages via multi-package.yaml
-dpm test --package-root daml-test       # 59 scripts
+dpm test --package-root daml-test       # 74 scripts
 ```
 
 Then, in two terminals:
@@ -145,13 +169,17 @@ dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
   --script-name Demo.Bootstrap:bootstrap \
   --ledger-host 127.0.0.1 --ledger-port 6865 --upload-dar true -w
 
-# terminal 3 — the app against the live participant
-cd frontend && npm install && NEXT_PUBLIC_LEDGER=canton npm run dev
+# terminal 3 — the app against the live participant (the default backend)
+cd frontend && npm install && npm run dev
 ```
 
-With **no sandbox at all** the app still runs: `NEXT_PUBLIC_LEDGER` defaults to
-`mock` and serves the in-memory fixture. This is deliberate — the app must
-build, boot and demo on a machine with no participant.
+With **no sandbox at all**, opt into the in-memory fixture:
+`NEXT_PUBLIC_LEDGER=mock npm run dev`. The mock also has an in-memory account
+store seeded with the same five demo logins; signups last until the server
+restarts. The default is the ledger because accounts and the party directory
+live there — it is the system of record. On the canton backend an absent
+participant is still not a build or boot failure: desks render empty and logins
+report the ledger unavailable.
 
 Frontend-only commands (`frontend/`):
 
@@ -161,6 +189,7 @@ npm run build        # next build
 npm run start        # next start -p 3000
 npm run typecheck    # tsc --noEmit   <- run this after any lib/ change
 npm run lint
+npm test             # = test:ledger: ledger adapter + auth (session, password, policy, access) tests
 ```
 
 `next.config.ts` honours `NEXT_DIST_DIR`, so a second build (e.g. the canton one)
@@ -187,9 +216,14 @@ package id, and the stale package id is still vetted. Two ways out:
 * **Restart the sandbox.** Usually faster, and it has a second benefit: party
   allocation starts clean, so `Demo.Bootstrap` produces plain `Treasury::…`,
   `DealerA::…` party ids instead of accumulating `Treasury-1`, `Treasury-2`,
-  `Treasury-3`… (`Tests.Fixtures.allocateDemoParties` suffixes each cast after
-  the first on the same ledger, and `frontend/lib/ledger/server/parties.ts` then
-  has to guess which one you meant — highest numeric suffix wins).
+  `Treasury-3`… (`Tests.Fixtures.allocateDemoParties` and `allocateOperator`
+  suffix each cast after the first on the same ledger). The resolver prefers the
+  newest operator's `PartyProfile`s, which name the seeded parties explicitly,
+  and only falls back to guessing by hint — highest numeric suffix wins.
+  Re-seeding also creates a second operator with its own directory, so accounts
+  signed up under the first one disappear from the app. Under Docker,
+  "restart the sandbox" means `docker compose down -v`: the volume persists the
+  ledger, and with it the stale package.
 
 Bump the package `version` in `daml/daml.yaml` only if you genuinely intend two
 coexisting versions on one participant; the frontend addresses templates by
@@ -415,8 +449,8 @@ displayed as `3039.9999999999995`.
 
 Everything below is read off `daml/daml/TreasuryRfq/`. **All choices are
 consuming** (no `nonconsuming` anywhere in the model), and no template has a
-contract key. 8 templates, 11 business choices, plus 8 implicit `Archive` =
-19 choices.
+contract key. 11 templates, 12 business choices, plus 11 implicit `Archive` =
+23 choices.
 
 ### 4.1 Shared vocabulary (`TreasuryRfq.Types`, no templates)
 
@@ -558,6 +592,33 @@ Buyer and seller are **not stored** — derived from `side` through
 The auditor is added as an observer **only here** — it sees the outcome of the
 trade and never a competing quote.
 
+#### Accounts — `TreasuryRfq.Accounts`
+
+Application data moved on-ledger: the party directory and the logins. All three
+templates are signed by `operator` (the app server's party) alone and take no
+part in the RFQ workflow. **Daml never hashes**: the server computes an scrypt
+hash, the ledger stores it as opaque text.
+
+| Item | Signature | Notes |
+| --- | --- | --- |
+| `UserType` | `Treasury \| Dealer \| Auditor` | Serialises to the strings `lib/auth/access.ts` uses. |
+| `knownSeats` | `[Text]` | `treasury`, `dealerA/B/C`, `auditor`, `registry`. Nobody logs in as the registry. |
+| `seatMatches` | `UserType -> Text -> Bool` | Treasury → `treasury`; Dealer → `dealerA/B/C`; Auditor → `auditor`. Mirrored in `access.ts`. |
+| `validUsername` | `Text -> Bool` | 3–32 chars of `[a-z0-9._-]`, starting alphanumeric. Lowercase-only so case cannot dodge uniqueness. Mirrored in `lib/auth/validate.ts`. |
+
+| Template | Signatory | Observer | `ensure` | Why that shape |
+| --- | --- | --- | --- | --- |
+| `PartyProfile` (`operator`, `party`, `seat`, `label`, `institution`) | `operator` | `party` | `seat` in `knownSeats`, non-empty label/institution | Each desk can read its own label; no desk learns the set of institutions. The resolver binds seats to parties from these. |
+| `AccountDirectory` (`operator`, `usernames : [Text]`) | `operator` | none | `unique usernames` | One per operator. Exists because a key on `UserAccount` would enforce nothing on 3.5.1 (section 8). |
+| `UserAccount` (`operator`, `username`, `passwordHash`, `userType`, `party`, `seat`) | `operator` | **none** | `validUsername`, non-empty hash, `seatMatches` | Not even the bound party observes it: it never needs its own hash, and an observer would hand it an offline-crackable one. |
+
+| Choice | Args | Returns | Controller | Assertions / effects |
+| --- | --- | --- | --- | --- |
+| `AccountDirectory.Register` | `username`, `passwordHash`, `userType`, `party`, `seat` | `(ContractId AccountDirectory, ContractId UserAccount)` | `operator` | `username notElem usernames`. Creates the account and recreates the directory with the name prepended. **Consuming on purpose**: two concurrent signups contend for one contract id, the ledger commits one, and the retried loser re-checks the list. Serialised registrations are fine at signup rates. |
+
+The ledger cannot check that `party` really holds `seat` without fetching a
+`PartyProfile`; the operator writes both and keeps them consistent.
+
 ### 4.3 Disclosure summary
 
 | Party | Can see |
@@ -567,6 +628,8 @@ trade and never a competing quote.
 | Winning dealer | The RFQ, its own invitation/quote, `AcceptedTrade`, `SettlementInstruction`, `SettlementReceipt`, its own holdings |
 | Auditor | `SettlementReceipt` only |
 | Registry | The holdings it issued (it is their signatory) |
+| Operator | `AccountDirectory`, every `UserAccount` and `PartyProfile`. No RFQ-model contract. |
+| Any desk party | Its own `PartyProfile` only; never a `UserAccount` (not even its own) or the directory |
 | Uninvited stranger | Nothing |
 
 ---
@@ -576,7 +639,7 @@ trade and never a competing quote.
 ### Running it
 
 ```bash
-dpm test --package-root daml-test                    # all 59 scripts
+dpm test --package-root daml-test                    # all 74 scripts
 dpm test --package-root daml-test --all --show-coverage
 ```
 
@@ -584,8 +647,8 @@ dpm test --package-root daml-test --all --show-coverage
 package is treated as a data-dependency and the report reads a vacuous
 `0 defined / 100.0%` — 100% of nothing. With `--all` the bar this repo holds is:
 
-* **8/8 templates**
-* **19/19 choices** (11 business + 8 implicit `Archive`)
+* **11/11 templates**
+* **23/23 choices** (12 business + 11 implicit `Archive`)
 
 Against a live ledger, where the per-script runner is unavailable, use the
 aggregate entry points:
@@ -598,18 +661,22 @@ dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
 
 ### Organisation
 
-59 zero-argument `Script`s are discovered by the runner: 50 named assertions,
-6 fixture stages, 2 aggregates, and `Demo.Bootstrap:bootstrap`.
+74 zero-argument `Script`s are discovered by the runner: 63 named assertions,
+8 fixture/setup scripts (6 stages, `allocateOperator`, `Tests.Accounts.accountsSetup`),
+2 aggregates, and `Demo.Bootstrap:bootstrap` — which therefore runs end to end on
+every `dpm test`, so a seed that breaks an `ensure` fails the suite rather than a
+live demo.
 
 | Module | Scripts | Contents |
 | --- | --- | --- |
 | `Tests` | 2 | `privacySuite`, `fullSuite`. Also the suite **map** — read its header comment first. |
-| `Tests.Fixtures` | 6 | `allocateDemoParties` plus the stage chain `openRfq → quotedRfq → acceptedRfq → allocatedRfq → settledRfq`. Every demo constant is defined here and nowhere else. |
+| `Tests.Fixtures` | 7 | `allocateDemoParties` plus the stage chain `openRfq → quotedRfq → acceptedRfq → allocatedRfq → settledRfq`; `allocateOperator`. Also `demoProfiles`, `demoAccounts` (precomputed scrypt hashes) and `seedAccounts`, which registers them through `Register`. Every demo constant is defined here and nowhere else. |
 | `Tests.Assertions` | 0 | `assertVisible` / `assertBlind` / `assertAllBlind` / `assertOnly`. |
 | `Tests.Lifecycle` | 13 | The happy path works. |
 | `Tests.Privacy` | 10 | **The centrepiece.** What each party cannot see, at every stage. |
 | `Tests.Authorization` | 18 | What each party cannot do — mostly `submitMustFail`; `authKnownLimitationTreasuryCanMintASecondFillRight` is the one that asserts what it still *can*. |
 | `Tests.Settlement` | 9 | DvP balances, atomicity under a failed leg, change arithmetic, `CancelAllocation` round trip. |
+| `Tests.Accounts` | 14 | `accountsSetup` + 13: `Register` claims a name once, username/hash/seat validation, operator-only creation and archive, and the privacy claims — a `UserAccount` and the directory are visible to the operator alone, a `PartyProfile` to the operator and its own party only. |
 | `Demo.Bootstrap` | 1 | Not a test. Seeds a live sandbox. |
 
 Stages return **named records**, never positional tuples, and the records are
@@ -647,10 +714,10 @@ see is the shared RFQ transitioning `Open → Closed`.
 ### What this suite does NOT pin: the client-side half of invariant 5
 
 The suite covers the **model**. It does not execute a line of TypeScript, and
-there is no JS test harness in this repo, so the client half of invariant 5 is
-unpinned: delete the sibling archive at
+the JS harness (`npm test` in `frontend/`) covers the server adapter and auth
+modules, not the close path, so the client half of invariant 5 is unpinned: delete the sibling archive at
 `frontend/lib/ledger/server/ledger.ts` (`closeRfq`/`cancelRfq`) or at
-`frontend/lib/ledger/mock.ts` (`transitionRfq`) and **every one of the 59
+`frontend/lib/ledger/mock.ts` (`transitionRfq`) and **every one of the 74
 scripts still passes**. `Tests.Authorization.authEndedRfqCannotBeFilled`
 performs the archive itself inside the script, so what it proves is that a spent
 right cannot be replayed — which `authFillRightIsScopedAndSingleUse` already
@@ -667,7 +734,7 @@ closed, and expect a rejection.
 
 ## 6. Frontend architecture
 
-Next.js 15 App Router, TypeScript strict, Tailwind v4, 69 source files, zero
+Next.js 15 App Router, TypeScript strict, Tailwind v4, 94 source files, zero
 runtime dependencies beyond `react` / `react-dom` / `next`.
 
 ### The `LedgerClient` seam
@@ -677,12 +744,14 @@ ledger. Two implementations:
 
 | Backend | File | `kind` | Selected by |
 | --- | --- | --- | --- |
-| In-memory fixture (default) | `lib/ledger/mock.ts` | `'mock'` | anything but `canton` |
-| Live participant | `lib/ledger/canton.ts` | `'canton'` | `NEXT_PUBLIC_LEDGER=canton` |
+| Live participant (default) | `lib/ledger/canton.ts` | `'canton'` | anything but `mock` |
+| In-memory fixture | `lib/ledger/mock.ts` | `'mock'` | `NEXT_PUBLIC_LEDGER=mock`, exactly |
 
 `lib/ledger/index.ts` is the **single swap point** (a memoised singleton). The
-default is `mock` on purpose: the app must build, boot and demo with no sandbox
-running, so a missing participant degrades rather than fails.
+default is `canton` because the party directory and the login accounts live on
+the ledger, so it is the system of record; a typo in the switch fails towards the
+real ledger rather than silently into a mock. A missing participant still
+degrades rather than fails: desks render empty and say so.
 
 **The rule: no component imports a backend directly.** Nothing in `app/` or
 `components/` may import `mock.ts`, `canton.ts`, or anything under
@@ -730,16 +799,71 @@ changes with every fresh sandbox, so **nothing hardcodes one**.
 * `lib/ledger/parties.ts` holds the six demo roles with a **mutable id table**
   (`PLACEHOLDER_PARTY_IDS` initially) read through getters. `PARTY_HINTS` maps each
   role to the id hint `Demo.Bootstrap` allocates under.
-* `lib/ledger/server/parties.ts` (server only) lists the participant's parties and
-  matches by hint, cached for 5s. `LEDGER_PARTY_TREASURY`, `_DEALER_A/B/C`,
-  `_AUDITOR`, `_REGISTRY` override. Where a hint matches several parties
-  (`Treasury-1`, `Treasury-2`, …) the **highest numeric suffix wins**.
-* `app/layout.tsx` resolves once per request, applies the ids to the server's copy
-  of the directory, and hands the same ids to `<PartyBootstrap>`, which applies
-  them to the browser's copy **in the render body** (idempotent) so children render
-  live ids on the first paint and hydration stays quiet.
+* `lib/ledger/server/parties.ts` (server only) resolves each seat, cached for 5s,
+  strongest source first:
+  1. `LEDGER_PARTY_TREASURY`, `_DEALER_A/B/C`, `_AUDITOR`, `_REGISTRY` overrides;
+  2. the operator's `PartyProfile` contracts, which bind each seat to a party
+     explicitly and carry its label and institution — they say which party the
+     seed *meant* rather than guessing from a suffix;
+  3. id-hint matching over the participant's party list. Where a hint matches
+     several parties (`Treasury-1`, `Treasury-2`, …) the **highest numeric suffix
+     wins**.
+* The operator is found the same way (hint `Operator`, override
+  `LEDGER_PARTY_OPERATOR`) via `resolveOperator()`, but it is **not** a demo role:
+  no desk acts as it, and it is never serialised into a response or a prop.
+* `app/layout.tsx` resolves once per request, applies the ids and profile labels
+  to the server's copy of the directory, and hands the same values to
+  `<PartyBootstrap>`, which applies them to the browser's copy **in the render
+  body** (idempotent) so children render live ids on the first paint and
+  hydration stays quiet. The labels in `lib/ledger/parties.ts` are the fallbacks
+  (and what the mock shows).
 * An unresolved role keeps its placeholder id — a visibly empty desk rather than a
   crashed app.
+
+### Accounts and sessions
+
+Login exists so each person reaches only their own seat. Three layers, and only
+the last one is a boundary:
+
+| Layer | File | Does |
+| --- | --- | --- |
+| Page routing | `middleware.ts` + `canOpen` / `homeFor` in `lib/auth/access.ts` | Anonymous → `/login?next=…`; signed in on `/login`/`/signup` or on someone else's desk → own desk. `/demo` is Treasury-only. UX, not privacy: a page shell shows nothing without data. |
+| Session | `lib/auth/server/session.ts` | HttpOnly, SameSite=Lax cookie `rfq_session`, 8 h, `{ username, userType, seat, exp }` HMAC-SHA256-signed with `SESSION_SECRET`. |
+| **API authorisation** | `lib/auth/server/policy.ts` (`allowedParties`, `assertMayActAs`), called through `requireActingParty` in `lib/auth/server/request.ts` | `/api/ledger/query` and `/command` reject an `asParty` the session may not act as: 401 without a session, 403 otherwise. `/tip` and `/parties` need a session (middleware 401s every `/api/*` but `/api/auth/*`). |
+
+*Why the cookie names a seat, not a party id:* the seat is resolved to the
+participant's current party on every request, so re-seeding the sandbox does not
+strand signed-in users with dead ids, and no party id ever rides in a cookie.
+
+*Why middleware runs on the Node runtime:* with `SESSION_SECRET` unset the
+fallback secret is random per process and parked in `process.env`; only code in
+the same process as the route handlers can see it. The verification code is Web
+Crypto only, so moving back to the edge is one line once a secret is always set.
+
+*The one exception in `allowedParties`:* every account acts as its own seat's
+party only — except a Treasury session, which may also act as Dealer A/B/C,
+because the split "Compare views" screen (`components/demo/SplitDemo.tsx`)
+reads a dealer desk and submits the seller's/buyer's settlement step from one
+screen. Reads stay party-scoped at the participant, so acting as Dealer A shows
+exactly Dealer A's slice. The auditor and registry are never reachable that way,
+and dealers never act as anyone else. Do not widen this list to make a screen
+work; that is the same bug as a privacy filter (invariant 6), one layer up.
+
+**Where accounts live.** `accountStore()` in `lib/auth/server/accounts.ts`
+follows the ledger switch. Canton: the server reads the operator's
+`UserAccount`s to verify a login and exercises `AccountDirectory.Register` as the
+operator to sign up (duplicate → 409). Signups from one server process are
+queued in-process (`globalThis`, since route bundles may each hold a copy of the
+module); contention across processes surfaces as `CONTRACT_NOT_ACTIVE` and is
+retried up to 3 times. Mock: a process-memory map seeded with the same five
+accounts and hashes as `Tests.Fixtures.demoAccounts`.
+
+**Credentials.** `scrypt$N$r$p$<salt>$<key>` (base64url, keylen 32; signups
+N=16384, r=8, p=1, random 16-byte salt), constant-time compare, a decoy hash for
+unknown usernames, one generic "Invalid username or password." for every
+credential failure, and 5 failures per username + client address in 15 minutes
+→ 429 (`lib/auth/server/rate-limit.ts`, in-process). The demo hashes use a salt
+derived from the username only so the seed is reproducible.
 
 ### Money
 
@@ -785,7 +909,7 @@ untouched. See invariant 4.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `NEXT_PUBLIC_LEDGER` | `mock` | `canton` selects the live backend |
+| `NEXT_PUBLIC_LEDGER` | `canton` | The live backend. Exactly `mock` selects the in-memory fixture. |
 | `LEDGER_NETWORK` | `sandbox` | Server-only profile: sandbox (no auth), localnet (JWT), devnet (Auth0 client credentials). |
 | `LEDGER_JSON_API` | `http://127.0.0.1:6864` in sandbox | JSON Ledger API base URL. Required for external profiles; HTTPS required for DevNet. **Server-side only.** |
 | `LEDGER_JWT_TOKEN` | — | LocalNet bearer token, without the Bearer prefix; replace/restart on expiry. |
@@ -795,6 +919,8 @@ untouched. See invariant 4.
 | `LEDGER_USER_ID` | `treasury-rfq-ui` | Provisioned ledger user recognized by the token on authenticated networks |
 | `APP_ORIGIN` | `http://127.0.0.1:3000` | Where server-side fetches address this app |
 | `LEDGER_PARTY_*` | — | Pin a party id instead of resolving it |
+| `LEDGER_PARTY_OPERATOR` | — | Pin the operator party (directory, profiles, logins). **Server only**; never sent to the browser. |
+| `SESSION_SECRET` | random per process | HMAC key for `rfq_session`; 32+ random chars. Unset → every restart signs everyone out. Anyone holding it can forge a Treasury session — never commit or `NEXT_PUBLIC_` it. |
 | `NEXT_DIST_DIR` | `.next` | Build output directory |
 
 ---
@@ -809,10 +935,12 @@ External profiles must supply an endpoint and credentials; there is no fallback
 to an unauthenticated participant. Auth0 grant failures and HTTP 401/403 responses
 are redacted before returning errors to the browser.
 
-The app still has **no inbound user authentication**: server credentials authorize
-a trusted demo operator, not the person selecting a desk. Keep every frontend on
-loopback, including LocalNet/DevNet profiles. One participant must host all demo
-parties; pin all six `LEDGER_PARTY_*` ids to skip party discovery on managed networks.
+The app login is **not a participant-level identity**: users sign in to the app,
+but the server still holds one ledger credential that can act for every demo
+party. Keep every frontend on loopback, including LocalNet/DevNet profiles. One
+participant must host all demo parties and the operator; pin all seven
+`LEDGER_PARTY_*` ids (six seats + `_OPERATOR`) to skip party discovery on managed
+networks.
 See `frontend/README.md`, `frontend/env/*.example`, and `docker-compose.external.yml`.
 Run `cd frontend && npm run test:ledger` for the server profile/auth/adapter tests;
 these do not replace live network privacy and settlement checks.
@@ -871,8 +999,9 @@ these do not replace live network privacy and settlement checks.
    * add the name to the `LedgerTemplate` union in `lib/ledger/client.ts` — *unless
      it is treasury-only like `RfqFill`, in which case deliberately leave it out so
      no read can return it*;
-   * `MODULE` entry in `lib/ledger/server/json-api.ts` (and filter it out of
-     `ALL_TEMPLATES` if it must not be read);
+   * `MODULE` entry in `lib/ledger/server/json-api.ts` (and add it to
+     `NOT_A_DESK_TEMPLATE` if no desk may read it — `RfqFill` and the three
+     account templates are there, which keeps them out of `ALL_TEMPLATES`);
    * decoder in `lib/ledger/server/decode.ts`;
    * a `DeskSnapshot` field in `client.ts` + both backends;
    * a `stakeholders.*` entry in `mock.ts` that **mirrors the Daml signatory /
@@ -887,17 +1016,23 @@ these do not replace live network privacy and settlement checks.
    (`TREASURY`, `DEALERS`, `dealerBySlug`, `infoForRole`) — never a party-id literal.
    Add a `routeFor` case and, if it is an operating identity, an entry in
    `OPERATING_IDENTITIES`.
-3. Read the ledger with `useDesk(info.party)` and project with
+3. **Decide who may open it** in `canOpen` (`lib/auth/access.ts`) — anything it
+   does not name is open to every signed-in user — and add it to `navFor` if it
+   belongs in the desk nav. `middleware.ts` applies `canOpen`; you do not edit it
+   unless the route must be public. If the screen acts as a party other than the
+   session's own seat, `allowedParties` will 403 it; that is the point. Change the
+   screen, not the policy.
+4. Read the ledger with `useDesk(info.party)` and project with
    `rfqView(snapshot, rfqId)` / `defaultRfqId(snapshot)` from `lib/ledger/view.ts`.
    Write commands through `useCommand()` + a `useLedger()` method.
-4. Render money with `format` from `lib/decimal.ts` at `precisionFor(symbol)`.
+5. Render money with `format` from `lib/decimal.ts` at `precisionFor(symbol)`.
    Never `Number(...)` a payload decimal.
-5. Reuse `components/primitives/*` (`Panel`, `Table`, `Field`, `Value`, `Status`,
+6. Reuse `components/primitives/*` (`Panel`, `Table`, `Field`, `Value`, `Status`,
    `PartyTag`, `Sealed`, `EmptyState`, `Notice`, `Timestamp`).
-6. **Do not add a `.filter()` that hides a contract from the acting party.** If a
+7. **Do not add a `.filter()` that hides a contract from the acting party.** If a
    desk can see something it should not, fix the model or the query — that is the
    bug the project is about.
-7. `npm run typecheck && npm run lint && npm run build`.
+8. `npm run typecheck && npm run lint && npm test && npm run build`.
 
 ### Change the fixture
 
@@ -915,6 +1050,10 @@ that is derived.
    the other.** The presets are `'quoted'` (default, three prices in), `'open'` (no
    quotes) and `'empty'`.
 4. `README.md`'s fixture paragraph and this file's section 4/8 references.
+   **Demo accounts** are a separate trio that must move together:
+   `Tests.Fixtures.demoAccounts` (and `demoProfiles`), `DEMO_ACCOUNTS` in
+   `frontend/lib/auth/server/accounts.ts` (the mock's copy of the same hashes), and
+   `DEMO_LOGINS` in `frontend/lib/auth/access.ts` (what the login page lists).
 5. Re-run `dpm test --package-root daml-test --all --show-coverage` and reload the
    app with a cleared session (the mock persists to `sessionStorage` under
    `rfq.mock.v2` — bump that key if the store shape changes, or the restore will
@@ -936,12 +1075,16 @@ Stated, not hidden. Each is deliberately unfixed for a recorded reason.
 | --- | --- |
 | **The allocated asset is pinned by `ContractId`, not escrowed.** `SettlementInstruction.assetHoldingCid` points at a holding that stays under the seller's control, so the seller can `Transfer` or split it between the two DvP steps. | This mock `TokenHolding` has no lock primitive. If the seller does spend it, `AllocatePaymentAndSettle` fails when it fetches the archived id — a contract-not-found rejection, not a clean assert — and the whole transaction aborts: nothing is lost and no partial settlement is possible. The seller does hold an option to walk away between the two steps. In a real deployment the pin is replaced by a **CIP-56 registry lock**, which the registry owns; building a lock or an escrow party into the mock would misrepresent where that responsibility lives. Pinned by `Tests.Settlement.settlementPinnedAssetCanBeSpentBySeller`. |
 | **`RfqFill` bounds reuse, not minting.** The treasury is its only signatory, so it can create a second fill right for the same `rfqId` and bind two dealers to the same quantity. | No ledger-level fix is available. Contract keys need LF 2.3 and this package targets 2.2 — and raising the target does not help: **Canton 3.5.1 does not enforce key uniqueness**, verified directly against a 3.5.1 sandbox where two contracts sharing `key (treasury, rfqId)` were both accepted. A key would read as a guarantee while enforcing nothing, which is worse than the stated gap. Enforcement would need a signatory the treasury does not control — a registry or notary party — which is a topology change, not a model change. The exposure is self-inflicted and invisible to dealers (`RfqFill` has no observers), so no dealer can detect it in advance. Exercised by `Tests.Authorization.authKnownLimitationTreasuryCanMintASecondFillRight`. |
-| **The sandbox Ledger API is unauthenticated, and the app has no inbound login.** No JWT is validated on `/api/ledger/*`; LocalNet/DevNet outbound calls use a server credential, not the caller's identity. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the ports can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. So the stack is now bound to **loopback only** — `docker-compose.yml` publishes `127.0.0.1:6864`, `127.0.0.1:6865` and `127.0.0.1:3000`. **Do not publish these on `0.0.0.0` or expose them through a tunnel.** A real deployment validates a JWT at the participant and derives `asParty` from the token rather than the request body; the route handlers are the single place that change lands. |
+| **The sandbox Ledger API is unauthenticated, and the app login is not a participant-level identity.** The app checks a session against `asParty` on `/api/ledger/*`, but the server submits with one ledger credential for every party; LocalNet/DevNet outbound calls use that server credential, not the caller's. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the participant's ports bypasses the app and can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. So the stack is bound to **loopback only** — `docker-compose.yml` publishes `127.0.0.1:6864`, `127.0.0.1:6865` and `127.0.0.1:3000`. **Do not publish these on `0.0.0.0` or expose them through a tunnel.** A real deployment validates a per-user JWT at the participant and derives `asParty` from the token; `requireActingParty` is the single place that change lands. |
+| **A Treasury session may act as Dealer A/B/C.** | Deliberate: the split view drives the dealer seats from one screen (section 6, "Accounts and sessions"). Reads stay party-scoped, so it learns nothing the dealer would not show it, but the treasury login is a demo operator over the dealer seats. Removing the exception means removing or splitting `/demo`. |
+| **The operator can bypass `Register`.** | It is the sole signatory of `UserAccount`, so it could create one directly and skip the directory. The operator *is* the app server; the guarantee is "the signup path cannot produce duplicates", not "no party can". Same root cause as the fill-right minting gap: no key enforcement on 3.5.1, and no second signatory to enforce it. |
+| **Sessions are not re-validated against the ledger per request.** | A signed cookie is trusted until it expires (8 h max). Archiving a `UserAccount` does not sign that user out; rotating `SESSION_SECRET` (or restarting with it unset) signs everyone out. Re-reading the operator's ACS on every request was not worth the latency for a demo. |
+| **In mock mode, login gates routing only.** | The fixture lives in the browser (`mock.ts`, `sessionStorage`), so there is no server-side `asParty` to check; any desk's data is already in the tab. The mock demonstrates the flow, not the boundary. |
 | **`TokenHolding` is a mock, not a real CIP-56 asset.** | Live CIP-56 integration is P2. The module is isolated precisely so the swap is local: an adapter replaces `Transfer` and `Settlement`/`Quoting`/`Rfq` are untouched, because all they know about an asset is that it has an owner, a symbol, an amount and a `Transfer` choice. cETH and CBTC are both CIP-56 and differ by registry, not by workflow. |
 | **Settlement requires explicit disclosure of the seller's holding.** | Not a bug — it is Canton behaving correctly (no divulgence). It is listed because it is a **real integration requirement**: any client of this model must implement the seller→buyer handoff of the disclosed contract. See invariant 4. |
 
 Non-goals, for the avoidance of scope creep: no Kafka, no Redis, no PQS, no
-Kubernetes, no auth/identity provider, no multi-participant topology, no order
+Kubernetes, no external auth/identity provider (the app login is local to the demo), no multi-participant topology, no order
 book or continuous market, no persistence outside the ledger, and no `Buy`-side
 demo path (the model supports `Side = Buy` throughout via `tradeParties`, but the
 fixture and the UI exercise `Sell`).
@@ -952,17 +1095,24 @@ fixture and the UI exercise `Sell`).
 
 Things that have already cost time.
 
-1. **Sandbox state is ephemeral.** `dpm sandbox` keeps everything in memory;
-   `docker compose down -v` wipes the volume. Restarting means re-running
-   `Demo.Bootstrap`. Nothing in the repo persists ledger state on purpose.
+1. **Native sandbox state is ephemeral; the Docker volume is not.** `dpm sandbox`
+   keeps everything in memory, so a restart means re-running `Demo.Bootstrap`.
+   Under Compose the ledger lives in a volume: trades, accounts and signups
+   survive `down`/`up` and app restarts, and only `down -v` wipes them. The flip
+   side: a volume seeded before `TreasuryRfq.Accounts` existed has no operator and
+   the old DAR — logins fail and the new DAR hits `KNOWN_PACKAGE_VERSION`. Run
+   `docker compose down -v` then `up`.
 2. **Party ids change with every fresh sandbox.** The fingerprint half of
    `<hint>-<disambiguator>::<fingerprint>` is the participant's namespace key.
    Never hardcode a party id anywhere — not in a test, not in a component, not in
-   a config file. Resolution is by **id hint** at runtime
-   (`lib/ledger/server/parties.ts`), with `LEDGER_PARTY_*` as the escape hatch.
+   a config file. Resolution is by the operator's `PartyProfile`s, then **id
+   hint**, at runtime (`lib/ledger/server/parties.ts`), with `LEDGER_PARTY_*` as
+   the escape hatch.
 3. **Re-seeding one sandbox accumulates suffixed parties.** `Treasury-1`,
-   `Treasury-2`, … The resolver takes the highest numeric suffix, which is usually
-   right and occasionally not. Restart the sandbox for a clean cast.
+   `Treasury-2`, `Operator-1`, … The resolver takes the highest numeric suffix,
+   which is usually right and occasionally not; each re-seed also brings a new
+   operator whose directory does not hold earlier signups. Restart the sandbox for
+   a clean cast.
 4. **Re-uploading a rebuilt DAR fails with `KNOWN_PACKAGE_VERSION`** until the
    stale package id is un-vetted. Restarting the sandbox is usually faster. See
    section 2.
@@ -1006,3 +1156,11 @@ Things that have already cost time.
     inconvenience to route around with sequential `submit`s — it is the type system
     enforcing invariant 3. If you find yourself wanting `>>=` between two commands
     in one submission, one of them belongs in a separate transaction.
+14. **`SESSION_SECRET` unset means every restart signs everyone out.** The
+    fallback is random per process (the server logs a warning once). A cookie
+    signed by the previous process fails verification and the middleware drops it
+    and sends the user to `/login` — not a bug. Set `SESSION_SECRET` to keep
+    sessions across restarts (Compose passes it through from the host).
+15. **`lib/auth/server/*` is server-only, like `lib/ledger/server/*`.** It holds
+    the session secret and reads password hashes. Components import only the
+    top level of `lib/auth/` (`access.ts`, `validate.ts`, `SessionProvider.tsx`).

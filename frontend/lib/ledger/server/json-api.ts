@@ -30,8 +30,15 @@ const PACKAGE = '#treasury-rfq';
  * the UI's `LedgerTemplate` union: it is the treasury's single-use right to
  * fill one RFQ, its only stakeholder is the treasury, and no desk renders it.
  * It exists here because commands must address it.
+ *
+ * The three `TreasuryRfq.Accounts` templates are the same kind of thing: the
+ * operator's party directory and login accounts, read and written only by the
+ * server acting as the operator (`lib/ledger/server/parties.ts`,
+ * `lib/auth/server/accounts.ts`). No desk reads them, so none of them is a
+ * `LedgerTemplate` either.
  */
-export type WireTemplate = LedgerTemplate | 'RfqFill';
+export type AccountTemplate = 'PartyProfile' | 'AccountDirectory' | 'UserAccount';
+export type WireTemplate = LedgerTemplate | 'RfqFill' | AccountTemplate;
 
 const MODULE: Record<WireTemplate, string> = {
   RFQ: 'TreasuryRfq.Rfq',
@@ -42,12 +49,29 @@ const MODULE: Record<WireTemplate, string> = {
   SettlementInstruction: 'TreasuryRfq.Settlement',
   SettlementReceipt: 'TreasuryRfq.Settlement',
   TokenHolding: 'TreasuryRfq.Holding',
+  PartyProfile: 'TreasuryRfq.Accounts',
+  AccountDirectory: 'TreasuryRfq.Accounts',
+  UserAccount: 'TreasuryRfq.Accounts',
 };
 
-/** Every template a desk reads. `RfqFill` is not one of them — nothing renders it. */
-export const ALL_TEMPLATES = (Object.keys(MODULE) as WireTemplate[]).filter(
-  (t): t is LedgerTemplate => t !== 'RfqFill',
-);
+/** Templates that exist on the wire but that no desk may ever be handed. */
+const NOT_A_DESK_TEMPLATE: ReadonlySet<string> = new Set<WireTemplate>([
+  'RfqFill',
+  'PartyProfile',
+  'AccountDirectory',
+  'UserAccount',
+]);
+
+function isDeskTemplate(t: string): t is LedgerTemplate {
+  return t in MODULE && !NOT_A_DESK_TEMPLATE.has(t);
+}
+
+/**
+ * Every template a desk reads. `RfqFill` and the account templates are not
+ * among them — nothing renders them, and a dealer's desk query must never
+ * start returning the operator's directory because a template list grew.
+ */
+export const ALL_TEMPLATES = (Object.keys(MODULE) as WireTemplate[]).filter(isDeskTemplate);
 
 export function templateId(template: WireTemplate): string {
   return `${PACKAGE}:${MODULE[template]}:${template}`;
@@ -60,11 +84,12 @@ export function entityOf(qualified: string): string {
 
 /**
  * `<pkg-id>:TreasuryRfq.Quoting:Quote` -> `Quote`, or null when the UI has no
- * type for it (an `RfqFill`, or a template from another package entirely).
+ * type for it (an `RfqFill`, an account template, or a template from another
+ * package entirely).
  */
 export function templateOf(qualified: string): LedgerTemplate | null {
   const entity = entityOf(qualified);
-  return entity !== 'RfqFill' && entity in MODULE ? (entity as LedgerTemplate) : null;
+  return isDeskTemplate(entity) ? entity : null;
 }
 
 /* ── wire shapes (only the fields this app reads) ─────────────────────── */

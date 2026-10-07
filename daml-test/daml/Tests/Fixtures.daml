@@ -16,10 +16,18 @@
 --   Opening balances: Treasury 25 cETH, each dealer 1,000,000 USD, issued by Registry.
 module Tests.Fixtures where
 
+import DA.Action (foldlA)
 import DA.Text (isPrefixOf)
 import DA.Time (addRelTime, hours)
 import Daml.Script
 
+import TreasuryRfq.Accounts
+  ( AccountDirectory(..)
+  , PartyProfile(..)
+  , Register(..)
+  , UserAccount
+  , UserType(..)
+  )
 import TreasuryRfq.Holding (TokenHolding(..))
 import TreasuryRfq.Quoting (Accept(..), Quote, RfqInvitation(..), SubmitQuote(..))
 import TreasuryRfq.Rfq (Close(..), RFQ(..), RfqFill(..))
@@ -382,3 +390,115 @@ settledRfq = do
     rfqId = fx.rfqId
     closedRfqCid = fx.closedRfqCid
     ..
+
+-- ---------------------------------------------------------------------------
+-- Accounts and party directory (HAC-12 / HAC-13)
+--
+-- Independent of the RFQ stages above: the directory and the login accounts are signed
+-- by a separate 'Operator' party (the app server) and never touch the auction, so
+-- 'seedAccounts' takes the cast and nothing else. Demo.Bootstrap runs it after
+-- 'openRfq'; Tests.Accounts runs it on its own.
+-- ---------------------------------------------------------------------------
+
+-- | Allocate the app operator with id hint @Operator@, suffixed exactly as
+-- 'allocateDemoParties' suffixes the cast, so the first operator on any ledger --
+-- the one Demo.Bootstrap prints -- reads as @Operator::1220...@.
+allocateOperator : Script Party
+allocateOperator = do
+  known <- listKnownParties
+  let alreadyAllocated =
+        length (filter (\d -> "Operator" `isPrefixOf` partyToText d.party) known)
+      suffix = if alreadyAllocated == 0 then "" else "-" <> show alreadyAllocated
+  allocateNamed ("Operator" <> suffix)
+
+-- | The party directory, moved on-ledger from the frontend: (seat, label, institution).
+-- The seat names are the ones 'TreasuryRfq.Accounts.knownSeats' accepts.
+demoProfiles : [(Text, Text, Text)]
+demoProfiles =
+  [ ("treasury", "Treasury", "Meridian Group Treasury")
+  , ("dealerA", "Dealer A", "Arclight Markets")
+  , ("dealerB", "Dealer B", "Brightwater Capital")
+  , ("dealerC", "Dealer C", "Castellan Securities")
+  , ("auditor", "Auditor", "Halvorsen Assurance")
+  , ("registry", "Registry", "Canton Token Registry")
+  ]
+
+-- | The party that holds a seat in this cast. Seat names are the directory's, so an
+-- unknown one is a fixture bug, not a runtime condition.
+seatParty : DemoParties -> Text -> Party
+seatParty p seat = case seat of
+  "treasury" -> p.treasury
+  "dealerA" -> p.dealerA
+  "dealerB" -> p.dealerB
+  "dealerC" -> p.dealerC
+  "auditor" -> p.auditor
+  "registry" -> p.registry
+  _ -> error ("seatParty: unknown seat " <> seat)
+
+-- | A demo login, before it is bound to a party.
+data DemoAccount = DemoAccount with
+    username : Text
+    passwordHash : Text
+    userType : UserType
+    seat : Text
+  deriving (Eq, Show)
+
+-- | The five demo logins. The password of each is its username (HAC-12), so these are
+-- PUBLIC credentials and the hashes are safe to commit.
+--
+-- Each hash is scrypt(N=16384, r=8, p=1, keylen=32) of password == username, with
+-- salt = the first 16 bytes of sha256("treasury-rfq-demo-salt:" <> username), encoded
+-- as @scrypt$N$r$p$<base64url salt>$<base64url key>@. The salt is derived rather than
+-- random only so the seed is reproducible; accounts created through signup get a random
+-- salt from the server. Daml never computes or checks these -- the frontend server does.
+demoAccounts : [DemoAccount]
+demoAccounts =
+  [ DemoAccount "treasury"
+      "scrypt$16384$8$1$-jvhI-OA0WlzFc33B6K6bw$rUI497KohQp-7cpG6ndxLU8_dgLaPjTfp-Eh2gCamlk"
+      Treasury "treasury"
+  , DemoAccount "dealer-a"
+      "scrypt$16384$8$1$BxQBjSu4_fzKzpIf_sCOEw$5WKitPB87xb0uzO7wMz2rFnOULp0EKOFD5xYe6mQZkQ"
+      Dealer "dealerA"
+  , DemoAccount "dealer-b"
+      "scrypt$16384$8$1$mxcQmfG9_m4ugFbFHElrrg$PWMPqAuuJGOijXETU0bZn2ZSsh8LON1SXCL_ntnpBC4"
+      Dealer "dealerB"
+  , DemoAccount "dealer-c"
+      "scrypt$16384$8$1$yPvAgkfs7aQFumIDLa6jcg$jFMtKmaTXPgDBnrrZbWLRVd4bIbiQekssgLPgnAjkyM"
+      Dealer "dealerC"
+  , DemoAccount "auditor"
+      "scrypt$16384$8$1$DLaWD-nAs8y_ifHuxuDtSA$SXwI5dsuLgqW2J2NB8v5vQtaG7PDa89jiaNBnrKsBmc"
+      Auditor "auditor"
+  ]
+
+data SeededAccounts = SeededAccounts with
+    operator : Party
+    directoryCid : ContractId AccountDirectory
+    profiles : [ContractId PartyProfile]
+    accounts : [ContractId UserAccount]
+  deriving (Eq, Show)
+
+-- | Allocate the operator, create its (empty) directory and one profile per seat, then
+-- register every demo account through 'Register' -- the same path signup takes, so the
+-- seeded accounts are subject to the same uniqueness check. The directory id is threaded
+-- through because each registration archives and recreates it.
+seedAccounts : DemoParties -> Script SeededAccounts
+seedAccounts p = do
+  operator <- allocateOperator
+  directory0 <- submit operator $ createCmd AccountDirectory with operator; usernames = []
+  profiles <- forA demoProfiles $ \(seat, label, institution) ->
+    submit operator $ createCmd PartyProfile with
+      operator
+      party = seatParty p seat
+      seat
+      label
+      institution
+  let register (directory, accounts) a = do
+        (directory', account) <- submit operator $ exerciseCmd directory Register with
+          username = a.username
+          passwordHash = a.passwordHash
+          userType = a.userType
+          party = seatParty p a.seat
+          seat = a.seat
+        pure (directory', accounts ++ [account])
+  (directoryCid, accounts) <- foldlA register (directory0, []) demoAccounts
+  pure SeededAccounts with ..

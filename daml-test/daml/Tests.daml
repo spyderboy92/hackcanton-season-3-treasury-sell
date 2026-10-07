@@ -42,10 +42,20 @@
 --                   runs @side = Buy@, so the 'tradeParties' Buy branch is evaluated
 --                   rather than assumed.
 --
+-- [Tests.Accounts] The on-ledger party directory and login accounts (HAC-12/13), signed
+--                   by a separate Operator party: Register claims a username once,
+--                   username/hash/seat validation, operator-only creation, and the
+--                   privacy claim that a UserAccount (it carries a password hash) and the
+--                   AccountDirectory are visible to the operator alone, while a
+--                   PartyProfile is visible to the party it describes and nobody else.
+--
 -- [Demo.Bootstrap]  NOT a test. Seeds a live sandbox with the same scenario, stopping
---                   before any quote is submitted so the demo can be driven from the UI.
+--                   before any quote is submitted so the demo can be driven from the UI,
+--                   then seeds the operator, profiles and demo logins. The test runner
+--                   discovers it too, so every @dpm test@ runs the seed end to end.
 module Tests
-  ( module Tests.Assertions
+  ( module Tests.Accounts
+  , module Tests.Assertions
   , module Tests.Authorization
   , module Tests.Fixtures
   , module Tests.Lifecycle
@@ -57,6 +67,7 @@ module Tests
 
 import Daml.Script
 
+import Tests.Accounts
 import Tests.Assertions
 import Tests.Authorization
 import Tests.Fixtures
@@ -78,6 +89,8 @@ privacySuite = do
   privacyStrangerSeesNothing
   privacyHoldingsAreNotBroadcast
   privacyLosingDealerFinalAcs
+  accountsPrivacyCredentialsAreOperatorOnly
+  accountsPrivacyProfilesAreSeenByTheirOwnPartyOnly
 
 -- | Everything, in one script, for running the suite against a real ledger where the
 -- per-script test runner is not available.
@@ -131,3 +144,16 @@ fullSuite = do
   settlementCancelAllocationRoundTrip
   settlementBuySideReversesBothLegs
   settlementReceiptArithmetic
+
+  -- Accounts (privacy scripts run above, via privacySuite)
+  accountsLifecycleRegisterCreatesAccount
+  accountsLifecycleRegisterTwoUsers
+  accountsLifecycleSeedMatchesDemoDirectory
+  accountsLifecycleArchiveIsOperatorOnly
+  accountsAuthDuplicateUsernameRejected
+  accountsAuthInvalidUsernamesRejected
+  accountsAuthEmptyHashRejected
+  accountsAuthSeatMustMatchUserType
+  accountsAuthOnlyOperatorMayRegister
+  accountsAuthOnlyOperatorMayCreate
+  accountsAuthProfileIsValidated

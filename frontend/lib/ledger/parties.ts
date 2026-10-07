@@ -15,6 +15,13 @@
  *             `<PartyBootstrap>` which applies them to this module in the
  *             browser. Both sides therefore render the same ids.
  *
+ * The same goes for each seat's `label` and `institution`. They now live on the
+ * ledger as the operator's `PartyProfile` contracts (`TreasuryRfq.Accounts`),
+ * read server-side and applied through `applyPartyDirectory` exactly like the
+ * ids. The values written below are the fallbacks — what the mock shows, and
+ * what a participant without profiles shows. `entitlement` stays here: it is
+ * explanatory copy about the Daml model, not data about the institution.
+ *
  * Everything else in the app keeps reading `TREASURY.party` and friends.
  */
 
@@ -32,10 +39,10 @@ export interface PartyInfo {
   role: DemoRole;
   /** The live Canton party id. Resolved at runtime on a real participant. */
   readonly party: Party;
-  /** Short label used in tables. */
-  label: string;
-  /** Full institution name. */
-  institution: string;
+  /** Short label used in tables. From the seat's PartyProfile when there is one. */
+  readonly label: string;
+  /** Full institution name. From the seat's PartyProfile when there is one. */
+  readonly institution: string;
   desk: DeskKind;
   /** One line describing the ledger entitlement, shown on the gate. */
   entitlement: string;
@@ -95,15 +102,43 @@ export function partyIds(): Record<DemoRole, Party> {
   return { ...IDS };
 }
 
+/** How the directory names one seat. */
+export interface DirectoryEntry {
+  label: string;
+  institution: string;
+}
+
+/** Live labels, keyed by role. Empty until a directory is applied; getters fall back. */
+const DIRECTORY: Partial<Record<DemoRole, DirectoryEntry>> = {};
+
+/**
+ * Apply the on-ledger party directory (the operator's `PartyProfile`s). Same
+ * contract as `applyPartyIds`: idempotent, and called with the same input on
+ * the server and in the browser so both renders agree. Blank values are
+ * ignored rather than rendering an empty label.
+ */
+export function applyPartyDirectory(entries: Partial<Record<DemoRole, DirectoryEntry>>): void {
+  for (const [role, entry] of Object.entries(entries) as [DemoRole, DirectoryEntry | undefined][]) {
+    if (entry?.label && entry.institution) DIRECTORY[role] = { label: entry.label, institution: entry.institution };
+  }
+}
+
 function identity(
   role: DemoRole,
   rest: Omit<PartyInfo, 'party' | 'role'>,
 ): PartyInfo {
+  const { label, institution, ...fixed } = rest;
   return {
     role,
-    ...rest,
+    ...fixed,
     get party() {
       return IDS[role];
+    },
+    get label() {
+      return DIRECTORY[role]?.label ?? label;
+    },
+    get institution() {
+      return DIRECTORY[role]?.institution ?? institution;
     },
   };
 }

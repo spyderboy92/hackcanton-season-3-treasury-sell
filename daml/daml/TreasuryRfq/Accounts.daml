@@ -1,0 +1,135 @@
+-- | Application data that used to live only in the frontend: the party directory
+-- (who each demo seat is, and the institution it plays) and the login accounts that
+-- bind a username to one of those seats.
+--
+-- WHO SIGNS. Everything here is signed by the 'Operator' party alone -- the app
+-- operator, which is the identity the Next.js server acts as when it verifies a login.
+-- None of these contracts takes part in the RFQ workflow, and nothing in the RFQ model
+-- imports this module (it imports nothing either), so adding or changing accounts can
+-- never change who sees a price. The module sits outside the RFQ DAG on purpose.
+--
+-- CREDENTIALS. Daml never hashes. The server computes an scrypt hash and hands it in;
+-- the ledger stores it as opaque text and checks only that it is non-empty. Verifying a
+-- password is the server's job, done against a 'UserAccount' it reads as the operator.
+module TreasuryRfq.Accounts where
+
+import DA.List (unique)
+import qualified DA.Text as T
+
+-- | The kind of desk an account logs into. A Dealer account additionally names WHICH
+-- dealer seat it is bound to (see 'seatMatches').
+data UserType = Treasury | Dealer | Auditor
+  deriving (Eq, Show, Ord)
+
+-- | Every demo seat the frontend renders. The registry is a seat (it has a profile so
+-- the UI can label it) but no account type maps to it: nobody logs in as the issuer.
+knownSeats : [Text]
+knownSeats = ["treasury", "dealerA", "dealerB", "dealerC", "auditor", "registry"]
+
+-- | Which seats an account of a given type may be bound to. Kept in Daml, not only in
+-- the signup form, so a malformed request cannot mint e.g. a Dealer account that logs
+-- into the treasury desk.
+seatMatches : UserType -> Text -> Bool
+seatMatches Treasury seat = seat == "treasury"
+seatMatches Dealer seat = seat `elem` ["dealerA", "dealerB", "dealerC"]
+seatMatches Auditor seat = seat == "auditor"
+
+-- | 3-32 characters of lowercase ascii letters, digits, '.', '_' and '-', starting with
+-- a letter or digit. Lowercase-only so uniqueness cannot be dodged by case ("Treasury"
+-- vs "treasury"), and a restricted alphabet so a username is always safe to log, put in
+-- a URL or a cookie without escaping.
+validUsername : Text -> Bool
+validUsername username =
+  n >= 3 && n <= 32 && case chars of
+    first :: _ -> first `elem` alphanumerics && all (`elem` allowed) chars
+    [] -> False
+  where
+    n = T.length username
+    chars = T.explode username
+    alphanumerics = T.explode "abcdefghijklmnopqrstuvwxyz0123456789"
+    allowed = alphanumerics ++ [".", "_", "-"]
+
+-- | One entry of the demo party directory: a seat, the party that holds it, and how the
+-- UI labels it.
+--
+-- Observed by the party it describes, so each desk can read its own label from its own
+-- ACS. It is NOT observed by the other parties: a profile names an institution, and the
+-- set of institutions in the directory is not something a dealer needs to learn from
+-- the ledger. The operator (the app server) reads the whole directory and is the only
+-- party that does.
+template PartyProfile
+  with
+    operator : Party
+    party : Party
+    seat : Text
+    label : Text
+    institution : Text
+  where
+    signatory operator
+    observer party
+
+    ensure seat `elem` knownSeats && label /= "" && institution /= ""
+
+-- | The set of usernames taken, one contract per operator.
+--
+-- WHY THIS EXISTS (and not a contract key on UserAccount). A key would read as a
+-- uniqueness guarantee, but Canton 3.5.1 does not enforce key uniqueness -- two
+-- contracts sharing a key were both accepted by a 3.5.1 sandbox (AGENTS.md section 8),
+-- and keys need LF 2.3 besides. Uniqueness comes from CONTENTION instead: 'Register' is
+-- consuming, so every registration archives this one contract. Two concurrent signups
+-- both try to consume the same contract id; the ledger commits one and rejects the
+-- other, and the retried loser then fails the 'notElem' assert if it chose the same
+-- username. Registrations are serialised, which is fine at signup rates.
+--
+-- KNOWN GAP. This only binds an operator that goes through 'Register'. The operator is
+-- the sole signatory of 'UserAccount' and is the app server itself, so it could create
+-- an account directly and skip the directory. The guarantee is "the app server's signup
+-- path cannot produce duplicates", not "no party can".
+--
+-- The list is plain text so the JSON shape stays trivial for the frontend.
+template AccountDirectory
+  with
+    operator : Party
+    usernames : [Text]
+  where
+    signatory operator
+
+    ensure unique usernames
+
+    -- Atomically claims the username and creates the account. Returns the recreated
+    -- directory so the caller can thread the new id into the next registration.
+    choice Register : (ContractId AccountDirectory, ContractId UserAccount)
+      with
+        username : Text
+        passwordHash : Text
+        userType : UserType
+        party : Party
+        seat : Text
+      controller operator
+      do
+        assertMsg ("username already taken: " <> username) (username `notElem` usernames)
+        account <- create UserAccount with ..
+        directory <- create this with usernames = username :: usernames
+        pure (directory, account)
+
+-- | A login: username, an opaque scrypt hash, and the seat it opens.
+--
+-- NO OBSERVERS. The credential hash is disclosed to nobody but the operator -- not even
+-- to the party the account logs in as, because that party never needs it: the server
+-- checks the password and then acts as the bound party. An observer here would hand
+-- every bound party an offline-crackable hash for no benefit.
+--
+-- The ledger cannot check that 'party' really holds 'seat' without fetching a
+-- PartyProfile; the operator writes both, so they are kept consistent by the server.
+template UserAccount
+  with
+    operator : Party
+    username : Text
+    passwordHash : Text
+    userType : UserType
+    party : Party
+    seat : Text
+  where
+    signatory operator
+
+    ensure validUsername username && passwordHash /= "" && seatMatches userType seat

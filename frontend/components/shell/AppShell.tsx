@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { DeskNav } from './DeskNav';
 import { LedgerStatus } from './LedgerStatus';
 import { ThemeToggle } from './ThemeToggle';
+import { UserMenu } from './UserMenu';
 import { Wordmark } from './Wordmark';
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -19,6 +20,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <div className="flex flex-1 items-center justify-end gap-3 xl:flex-none">
           <LedgerStatus />
           <ThemeToggle />
+          <UserMenu />
         </div>
       </header>
       <div className="border-b border-line px-4 py-3 xl:hidden">

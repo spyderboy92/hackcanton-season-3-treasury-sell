@@ -8,6 +8,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { requireSession } from '@/lib/auth/server/request';
 import { ledgerEnd } from '@/lib/ledger/server/json-api';
 import { errorResponse } from '@/lib/ledger/server/http';
 import type { TipResponse } from '@/lib/ledger/wire';
@@ -16,6 +17,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    await requireSession();
     return NextResponse.json<TipResponse>({ offset: await ledgerEnd() });
   } catch (cause) {
     return errorResponse(cause);

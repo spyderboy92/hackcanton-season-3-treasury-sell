@@ -7,6 +7,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { requireSession } from '@/lib/auth/server/request';
 import { resolveDemoParties } from '@/lib/ledger/server/parties';
 import { errorResponse } from '@/lib/ledger/server/http';
 import type { PartiesResponse } from '@/lib/ledger/wire';
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
+    await requireSession();
     const resolved = await resolveDemoParties();
     return NextResponse.json<PartiesResponse>(resolved);
   } catch (cause) {

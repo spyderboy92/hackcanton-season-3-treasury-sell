@@ -1,0 +1,308 @@
+-- | The on-ledger party directory and login accounts (HAC-12 / HAC-13).
+--
+-- Lifecycle, privacy and authorization for 'TreasuryRfq.Accounts', in one module
+-- because the three templates form one small, self-contained subsystem that never
+-- touches the auction. The claims that matter:
+--
+--   * a username can be registered once, and only through 'Register' by the operator;
+--   * a 'UserAccount' -- which carries a password hash -- is visible to the operator and
+--     to NOBODY else, not even the party it logs in as;
+--   * a 'PartyProfile' is visible to the operator and to the party it describes only.
+--
+-- As in Tests.Privacy, every visibility claim is an ACS query issued AS the party, so an
+-- empty result is the ledger declining to disclose.
+module Tests.Accounts where
+
+import DA.Assert ((===))
+import DA.Foldable (forA_)
+import DA.Functor (void)
+import DA.List (sort)
+import qualified DA.Text as T
+import Daml.Script
+
+import TreasuryRfq.Accounts
+
+import Tests.Assertions
+import Tests.Fixtures
+
+-- ---------------------------------------------------------------------------
+-- Local setup: a cast, an operator, and an EMPTY directory -- so each test registers
+-- exactly what it asserts on rather than inheriting the five demo logins.
+-- ---------------------------------------------------------------------------
+
+data AccountsSetup = AccountsSetup with
+    parties : DemoParties
+    operator : Party
+    directoryCid : ContractId AccountDirectory
+  deriving (Eq, Show)
+
+accountsSetup : Script AccountsSetup
+accountsSetup = do
+  parties <- allocateDemoParties
+  operator <- allocateOperator
+  directoryCid <- submit operator $ createCmd AccountDirectory with operator; usernames = []
+  pure AccountsSetup with ..
+
+-- | A well-formed registration of a Dealer account on seat dealerA. Tests override the
+-- one field they are probing.
+dealerARegistration : DemoParties -> Text -> Register
+dealerARegistration p username = Register with
+  username
+  passwordHash = "scrypt$16384$8$1$c2FsdA$a2V5"
+  userType = Dealer
+  party = p.dealerA
+  seat = "dealerA"
+
+everyone : DemoParties -> [Party]
+everyone p = [p.treasury, p.dealerA, p.dealerB, p.dealerC, p.auditor, p.registry, p.stranger]
+
+-- ---------------------------------------------------------------------------
+-- Lifecycle
+-- ---------------------------------------------------------------------------
+
+-- | Register claims the username in the directory and creates the account with exactly
+-- the fields it was given.
+accountsLifecycleRegisterCreatesAccount : Script ()
+accountsLifecycleRegisterCreatesAccount = do
+  s <- accountsSetup
+  let p = s.parties
+  (directoryCid, accountCid) <- submit s.operator $
+    exerciseCmd s.directoryCid (dealerARegistration p "alice")
+
+  (dirCid, dir) <- assertOnly @AccountDirectory "the operator sees one directory" s.operator (const True)
+  dirCid === directoryCid
+  dir.usernames === ["alice"]
+
+  (cid, account) <- assertOnly @UserAccount "the operator sees the new account" s.operator (const True)
+  cid === accountCid
+  account === UserAccount with
+    operator = s.operator
+    username = "alice"
+    passwordHash = "scrypt$16384$8$1$c2FsdA$a2V5"
+    userType = Dealer
+    party = p.dealerA
+    seat = "dealerA"
+
+-- | Two different usernames both register; the threaded directory id carries both.
+accountsLifecycleRegisterTwoUsers : Script ()
+accountsLifecycleRegisterTwoUsers = do
+  s <- accountsSetup
+  let p = s.parties
+  (dir1, _) <- submit s.operator $ exerciseCmd s.directoryCid (dealerARegistration p "alice")
+  (_, _) <- submit s.operator $ exerciseCmd dir1 Register with
+    username = "bob.treasury"
+    passwordHash = "scrypt$16384$8$1$c2FsdA$Ym9i"
+    userType = Treasury
+    party = p.treasury
+    seat = "treasury"
+
+  (_, dir) <- assertOnly @AccountDirectory "still exactly one directory" s.operator (const True)
+  sort dir.usernames === ["alice", "bob.treasury"]
+  accounts <- assertVisible @UserAccount "two accounts" s.operator 2
+  sort (map (\(_, a) -> (a.username, a.userType, a.seat)) accounts)
+    === [("alice", Dealer, "dealerA"), ("bob.treasury", Treasury, "treasury")]
+
+-- | The seed Demo.Bootstrap runs: six profiles with the directory's labels, five demo
+-- logins, and a directory that lists exactly those five usernames.
+accountsLifecycleSeedMatchesDemoDirectory : Script ()
+accountsLifecycleSeedMatchesDemoDirectory = do
+  p <- allocateDemoParties
+  seeded <- seedAccounts p
+
+  profiles <- assertVisible @PartyProfile "the operator sees every profile" seeded.operator 6
+  sort (map (\(_, pr) -> (pr.seat, pr.label, pr.institution, pr.party)) profiles)
+    === sort (map (\(seat, label, institution) -> (seat, label, institution, seatParty p seat)) demoProfiles)
+
+  (_, dir) <- assertOnly @AccountDirectory "one directory" seeded.operator (const True)
+  sort dir.usernames === sort (map (\a -> a.username) demoAccounts)
+
+  accounts <- assertVisible @UserAccount "five demo accounts" seeded.operator 5
+  sort (map (\(_, a) -> (a.username, a.passwordHash, a.userType, a.seat, a.party)) accounts)
+    === sort (map (\a -> (a.username, a.passwordHash, a.userType, a.seat, seatParty p a.seat)) demoAccounts)
+
+-- | Every template can be archived by the operator, and only by the operator. The bound
+-- party of a profile can SEE it but cannot archive it; nobody else can even address an
+-- account or the directory.
+accountsLifecycleArchiveIsOperatorOnly : Script ()
+accountsLifecycleArchiveIsOperatorOnly = do
+  p <- allocateDemoParties
+  seeded <- seedAccounts p
+  (profileCid, _) <- assertOnly @PartyProfile "treasury's own profile" p.treasury (const True)
+  accountCid <- case seeded.accounts of
+    cid :: _ -> pure cid
+    [] -> abort "seedAccounts registered no accounts"
+
+  expectAuthorizationError "the described party archiving its profile" p.treasury $
+    archiveCmd profileCid
+  expectNotVisible "a bound party archiving its account" p.treasury $
+    archiveCmd accountCid
+  expectNotVisible "a party archiving the directory" p.treasury $
+    archiveCmd seeded.directoryCid
+
+  submit seeded.operator $ archiveCmd profileCid
+  submit seeded.operator $ archiveCmd accountCid
+  submit seeded.operator $ archiveCmd seeded.directoryCid
+  void $ assertVisible @PartyProfile "one profile archived" seeded.operator 5
+  void $ assertVisible @UserAccount "one account archived" seeded.operator 4
+  assertBlind @AccountDirectory "directory archived" seeded.operator
+
+-- ---------------------------------------------------------------------------
+-- Privacy
+-- ---------------------------------------------------------------------------
+
+-- | Credentials are operator-only. No party in the cast -- including the five that HAVE
+-- an account bound to them -- sees a UserAccount or the directory of usernames.
+accountsPrivacyCredentialsAreOperatorOnly : Script ()
+accountsPrivacyCredentialsAreOperatorOnly = do
+  p <- allocateDemoParties
+  seeded <- seedAccounts p
+  void $ assertVisible @UserAccount "the operator sees every account" seeded.operator 5
+  assertAllBlind @UserAccount "no party sees a password hash, not even its own" (everyone p)
+  assertAllBlind @AccountDirectory "no party sees the username directory" (everyone p)
+
+-- | A profile is disclosed to the party it describes and to nobody else in the cast.
+accountsPrivacyProfilesAreSeenByTheirOwnPartyOnly : Script ()
+accountsPrivacyProfilesAreSeenByTheirOwnPartyOnly = do
+  p <- allocateDemoParties
+  _ <- seedAccounts p
+  forA_ demoProfiles $ \(seat, label, _) -> do
+    let me = seatParty p seat
+    (_, pr) <- assertOnly @PartyProfile ("a party sees only its own profile: " <> seat) me
+      (\pr -> pr.party == me)
+    pr.label === label
+  assertBlind @PartyProfile "the stranger has no profile and sees none" p.stranger
+
+-- ---------------------------------------------------------------------------
+-- Authorization and validation
+-- ---------------------------------------------------------------------------
+
+-- | A username already in the directory cannot be registered again, whatever the
+-- other fields say.
+accountsAuthDuplicateUsernameRejected : Script ()
+accountsAuthDuplicateUsernameRejected = do
+  s <- accountsSetup
+  let p = s.parties
+  (dir1, _) <- submit s.operator $ exerciseCmd s.directoryCid (dealerARegistration p "alice")
+  submitMustFail s.operator $ exerciseCmd dir1 (dealerARegistration p "alice")
+  submitMustFail s.operator $ exerciseCmd dir1 Register with
+    username = "alice"
+    passwordHash = "scrypt$other"
+    userType = Auditor
+    party = p.auditor
+    seat = "auditor"
+  void $ assertVisible @UserAccount "still exactly one account" s.operator 1
+  -- The directory itself refuses a duplicated list, so a directory created directly by
+  -- the operator cannot start out inconsistent.
+  submitMustFail s.operator $ createCmd AccountDirectory with
+    operator = s.operator
+    usernames = ["alice", "alice"]
+
+-- | The username rules: 3-32 characters of [a-z0-9._-], starting with a letter or digit.
+accountsAuthInvalidUsernamesRejected : Script ()
+accountsAuthInvalidUsernamesRejected = do
+  s <- accountsSetup
+  let p = s.parties
+      longest = T.implode (replicate 32 "a")
+  forA_
+    [ "ab"                    -- too short
+    , longest <> "a"          -- too long (33)
+    , ""                      -- empty
+    , "Alice"                 -- uppercase: uniqueness must not be dodgeable by case
+    , "al ice"                -- space
+    , "al@ice"                -- outside the alphabet
+    , "-alice"                -- leading '-'
+    , ".alice"                -- leading '.'
+    , "_alice"                -- leading '_'
+    ]
+    (\bad -> submitMustFail s.operator $ exerciseCmd s.directoryCid (dealerARegistration p bad))
+  assertBlind @UserAccount "no malformed account reached the ledger" s.operator
+
+  -- The boundaries are inclusive and the whole alphabet is accepted.
+  (dir1, _) <- submit s.operator $ exerciseCmd s.directoryCid (dealerARegistration p "abc")
+  (dir2, _) <- submit s.operator $ exerciseCmd dir1 (dealerARegistration p longest)
+  void $ submit s.operator $ exerciseCmd dir2 (dealerARegistration p "0a.b_c-9")
+  void $ assertVisible @UserAccount "three edge-case accounts" s.operator 3
+
+-- | A password hash is required. The ledger cannot judge a hash, but it can refuse none.
+accountsAuthEmptyHashRejected : Script ()
+accountsAuthEmptyHashRejected = do
+  s <- accountsSetup
+  submitMustFail s.operator $ exerciseCmd s.directoryCid
+    (dealerARegistration s.parties "alice") with passwordHash = ""
+  assertBlind @UserAccount "no hashless account" s.operator
+
+-- | The user type fixes the seats an account may open: a Dealer account cannot log into
+-- the treasury desk, a Treasury account cannot log into a dealer desk, nobody logs in as
+-- the registry.
+accountsAuthSeatMustMatchUserType : Script ()
+accountsAuthSeatMustMatchUserType = do
+  s <- accountsSetup
+  let p = s.parties
+      reg = dealerARegistration p "alice"
+  submitMustFail s.operator $ exerciseCmd s.directoryCid
+    reg with userType = Dealer; seat = "treasury"; party = p.treasury
+  submitMustFail s.operator $ exerciseCmd s.directoryCid
+    reg with userType = Treasury; seat = "dealerA"
+  submitMustFail s.operator $ exerciseCmd s.directoryCid
+    reg with userType = Auditor; seat = "dealerB"; party = p.dealerB
+  submitMustFail s.operator $ exerciseCmd s.directoryCid
+    reg with userType = Treasury; seat = "registry"; party = p.registry
+  submitMustFail s.operator $ exerciseCmd s.directoryCid
+    reg with seat = "dealerD"
+  assertBlind @UserAccount "no mismatched account" s.operator
+
+-- | Only the operator may register: no other party can even address the directory.
+accountsAuthOnlyOperatorMayRegister : Script ()
+accountsAuthOnlyOperatorMayRegister = do
+  s <- accountsSetup
+  let p = s.parties
+  forA_ (everyone p) $ \other ->
+    expectNotVisible "a non-operator exercising Register" other $
+      exerciseCmd s.directoryCid (dealerARegistration p "alice")
+  assertBlind @UserAccount "no account was registered" s.operator
+
+-- | Nobody but the operator can sign an account, a profile or a directory into
+-- existence -- including the party the record would describe.
+accountsAuthOnlyOperatorMayCreate : Script ()
+accountsAuthOnlyOperatorMayCreate = do
+  s <- accountsSetup
+  let p = s.parties
+  expectAuthorizationError "a party minting its own account" p.dealerA $
+    createCmd UserAccount with
+      operator = s.operator
+      username = "mallory"
+      passwordHash = "scrypt$x"
+      userType = Dealer
+      party = p.dealerA
+      seat = "dealerA"
+  expectAuthorizationError "a party relabelling itself" p.dealerA $
+    createCmd PartyProfile with
+      operator = s.operator
+      party = p.dealerA
+      seat = "dealerA"
+      label = "Dealer A"
+      institution = "Forged Holdings"
+  expectAuthorizationError "a stranger forging a directory" p.stranger $
+    createCmd AccountDirectory with operator = s.operator; usernames = ["mallory"]
+  assertBlind @UserAccount "no forged account" s.operator
+  assertBlind @PartyProfile "no forged profile" s.operator
+  void $ assertVisible @AccountDirectory "only the operator's own directory" s.operator 1
+
+-- | A profile must name a known seat and carry a label and an institution.
+accountsAuthProfileIsValidated : Script ()
+accountsAuthProfileIsValidated = do
+  s <- accountsSetup
+  let p = s.parties
+      good = PartyProfile with
+        operator = s.operator
+        party = p.dealerA
+        seat = "dealerA"
+        label = "Dealer A"
+        institution = "Arclight Markets"
+  submitMustFail s.operator $ createCmd good with seat = "dealerD"
+  submitMustFail s.operator $ createCmd good with seat = "DealerA"
+  submitMustFail s.operator $ createCmd good with seat = ""
+  submitMustFail s.operator $ createCmd good with label = ""
+  submitMustFail s.operator $ createCmd good with institution = ""
+  assertBlind @PartyProfile "no malformed profile" s.operator
+  void $ submit s.operator $ createCmd good
