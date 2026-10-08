@@ -16,7 +16,7 @@ On a public chain every quote is visible to every competitor. Here the RFQ is on
 git clone <repo> && cd hackcanton-season-3-treasury-sell
 docker compose up               # builds the DAR, starts a Canton sandbox, seeds the demo, serves the UI
                                 # -d detached; logs -f; down (-v wipes ledger state)
-docker compose run --rm tests   # the 59-script Daml suite
+docker compose run --rm tests   # the 74-script Daml suite
 ```
 
 | URL / port | What |
@@ -24,6 +24,12 @@ docker compose run --rm tests   # the 59-script Daml suite
 | http://localhost:3000 | the app, wired to the live ledger |
 | localhost:6864 | Canton JSON Ledger API v2 |
 | localhost:6865 | Canton gRPC Ledger API |
+
+**Sign in.** Every page needs a login. Demo accounts, password = username:
+`treasury`, `dealer-a`, `dealer-b`, `dealer-c`, `auditor`. Each lands on its own
+desk and cannot open another. `/signup` creates more, bound to an existing seat.
+Accounts and trades live on the ledger, so they survive restarts; a volume
+seeded before accounts existed needs `docker compose down -v` once.
 
 **Try the happy path.** From the home page, follow
 [`docs/HAPPY-PATH.md`](docs/HAPPY-PATH.md) — split view or desk-by-desk accept
@@ -43,17 +49,17 @@ dpm sandbox                          # terminal 1; then, in terminal 2:
 dpm script --dar daml-test/.daml/dist/treasury-rfq-tests-0.0.1.dar \
   --script-name Demo.Bootstrap:bootstrap \
   --ledger-host 127.0.0.1 --ledger-port 6865 --upload-dar true -w
-cd frontend && npm install && NEXT_PUBLIC_LEDGER=canton npm run dev
+cd frontend && npm install && npm run dev   # the live ledger is the default
 ```
 
-With no sandbox at all the app still runs: `NEXT_PUBLIC_LEDGER` defaults to `mock` and serves an in-memory fixture.
+With no sandbox at all, `NEXT_PUBLIC_LEDGER=mock npm run dev` serves an in-memory fixture with the same demo accounts.
 </details>
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  UI["Next.js UI"] --> API["Next.js route handlers<br/>act as the selected party"] --> JSON["Canton JSON Ledger API"] --> SBX["Canton sandbox"] --> DAR["treasury-rfq.dar"]
+  UI["Next.js UI"] --> API["Next.js route handlers<br/>act as the signed-in seat's party"] --> JSON["Canton JSON Ledger API"] --> SBX["Canton sandbox"] --> DAR["treasury-rfq.dar"]
 ```
 
 ## Contract model
@@ -71,6 +77,10 @@ flowchart TB
   end
   Q -->|Accept| AT
   Fill["RfqFill<br/>treasury only, single use"] -. consumed by Accept .-> AT
+  subgraph accounts["App directory — Operator signs, outside the RFQ"]
+    Dir["AccountDirectory"] -->|Register| UA["UserAccount<br/>no observers"]
+    PP["PartyProfile<br/>its party observes"]
+  end
 ```
 
 | Template | Signatory | Observers | Purpose |
@@ -83,6 +93,9 @@ flowchart TB
 | `TokenHolding` | issuer | owner | Mock CIP-56-shaped holding (cETH / USD / CBTC). |
 | `SettlementInstruction` | treasury + dealer | none | Half-settled DvP: asset leg allocated, cash leg outstanding. |
 | `SettlementReceipt` | treasury + dealer | optional auditor | Immutable post-trade evidence. |
+| `PartyProfile` | operator | the party it describes | On-ledger party directory: seat, label, institution. |
+| `AccountDirectory` | operator | none | Taken usernames. Consuming `Register` makes uniqueness a contention check, since Canton 3.5.1 does not enforce keys. |
+| `UserAccount` | operator | none | Login: username, scrypt hash, bound seat. The hash reaches nobody, not even the bound party. |
 
 ## Privacy model
 
@@ -92,6 +105,7 @@ flowchart TB
 | Losing dealer | Closed RFQ, own quote, own cash. Nothing else. |
 | Winning dealer | RFQ, own quote, `AcceptedTrade`, receipt |
 | Auditor | `SettlementReceipt` only — no RFQ, no quote, no trade |
+| Operator (the app server) | Account directory, logins, party profiles. Nothing in the RFQ — it is a stakeholder on no auction contract. |
 | Stranger | Nothing |
 
 Proven by negative assertions in the test suite and re-proven against a live participant with wildcard ACS queries (no template filter, so nothing can be hidden by the query shape).
@@ -125,14 +139,17 @@ Settlement is two-step DvP because a single `Settle` is impossible: it would nee
 
 | Layer | State |
 | --- | --- |
-| Contract model | 8 templates, 11 business choices, 5 modules, 587 lines. Canton SDK 3.5.1. |
-| Tests | 59 Daml Script tests, all passing. 100% coverage: 8/8 templates, 19/19 choices. |
-| Frontend | Next.js 15 App Router, TypeScript strict, Tailwind v4, 11 routes, 69 source files, zero runtime deps beyond react/react-dom/next. |
+| Contract model | 11 templates, 12 business choices, 6 modules, 722 lines. Canton SDK 3.5.1. |
+| Tests | 74 Daml Script tests, all passing. 100% coverage: 11/11 templates, 23/23 choices. |
+| Frontend | Next.js 15 App Router, TypeScript strict, Tailwind v4, 17 route files, 94 source files, zero runtime deps beyond react/react-dom/next. |
+| Accounts | Login and signup on the ledger (`TreasuryRfq.Accounts`); HMAC-signed session cookie; the API lets a session act only as its own seat's party. |
 | Live ledger | Full round trip driven through the UI against a running sandbox: quote, accept, allocate, settle. |
 
 > **Run it on your own machine only.** The Canton sandbox serves the Ledger API with
 > no authentication: the acting party is whatever the caller names, so anyone who can
-> reach port 6864 can read any desk and submit as any party. Compose binds every
-> published port to `127.0.0.1` for that reason — do not expose them.
+> reach port 6864 can read any desk and submit as any party. The app login does not
+> change that — it gates the app's own API, not the participant, and the server still
+> uses one ledger credential for every party. Compose binds every published port to
+> `127.0.0.1` for that reason — do not expose them.
 
-**Known gaps.** The allocated asset is pinned by `ContractId`, not escrowed — the mock holding has no lock, so a seller can spend it between the two steps (settle then aborts cleanly with contract-not-found; real CIP-56 registries provide the lock). The single-use fill right bounds reuse but not minting — the treasury is its only signatory, so it can mint a second one for the same `rfqId`; no ledger-level fix exists, because Canton 3.5.1 does not enforce contract-key uniqueness. `TokenHolding` is a mock; live CIP-56 integration is P2. Settlement requires explicit disclosure of the seller's holding. The Ledger API is unauthenticated, so the stack is loopback-only. See [`AGENTS.md`](AGENTS.md) for the design rationale behind each decision and the full gap list.
+**Known gaps.** The allocated asset is pinned by `ContractId`, not escrowed — the mock holding has no lock, so a seller can spend it between the two steps (settle then aborts cleanly with contract-not-found; real CIP-56 registries provide the lock). The single-use fill right bounds reuse but not minting — the treasury is its only signatory, so it can mint a second one for the same `rfqId`; no ledger-level fix exists, because Canton 3.5.1 does not enforce contract-key uniqueness. `TokenHolding` is a mock; live CIP-56 integration is P2. Settlement requires explicit disclosure of the seller's holding. The Ledger API is unauthenticated and the app login is not a participant-level identity, so the stack is loopback-only. A Treasury session may also act as the three dealer parties, because the split view drives the dealer seats. The operator is the only signatory of a `UserAccount`, so it can bypass `Register`; it is the app server, so the guarantee is "the signup path cannot produce duplicates". Sessions are not re-checked against the ledger per request (8 h expiry). In mock mode the fixture is browser-side, so login gates routing only. See [`AGENTS.md`](AGENTS.md) for the design rationale behind each decision and the full gap list.

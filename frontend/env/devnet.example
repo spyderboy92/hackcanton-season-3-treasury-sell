@@ -6,3 +6,9 @@ LEDGER_AUTH0_DOMAIN=REPLACE_TENANT.auth0.com
 LEDGER_AUTH0_CLIENT_ID=REPLACE_CLIENT_ID
 LEDGER_AUTH0_CLIENT_SECRET=REPLACE_CLIENT_SECRET
 LEDGER_AUTH0_AUDIENCE=REPLACE_LEDGER_API_AUDIENCE
+
+# HMAC key for the login session cookie (32+ random chars, e.g. `openssl rand -base64 48`).
+# Unset: a random per-process secret is used and every restart signs users out.
+# SESSION_SECRET=<paste a long random value; do not reuse this placeholder>
+# Optional: pin the operator party (signatory of the account directory and party profiles).
+# LEDGER_PARTY_OPERATOR=Operator::REPLACE_FINGERPRINT

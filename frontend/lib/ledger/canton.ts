@@ -289,6 +289,12 @@ export class CantonLedgerClient implements LedgerClient {
     }
 
     const text = await response.text();
+    // The session expired or was cleared in another tab. Re-authenticate and
+    // come back here, rather than showing a desk full of "not authorised".
+    if (response.status === 401 && typeof window !== 'undefined') {
+      const here = `${window.location.pathname}${window.location.search}`;
+      window.location.assign(`/login?next=${encodeURIComponent(here)}`);
+    }
     if (!response.ok) {
       const wire = parse<WireError>(text);
       if (wire?.error) throw new LedgerError(wire.error.code, wire.error.message);

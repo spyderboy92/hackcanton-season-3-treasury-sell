@@ -11,22 +11,74 @@ property of the ledger, not a filter in a component.
 
 ```
 npm install
-npm run dev        # http://localhost:3000
+npm run dev        # http://localhost:3000 — the live ledger by default
+NEXT_PUBLIC_LEDGER=mock npm run dev   # no sandbox: the in-memory fixture
 npm run typecheck  # tsc --noEmit
 npm run build
+npm test           # server-side ledger adapter + auth unit tests
 ```
 
 Ports 6864/6865 belong to the Canton sandbox. This app uses 3000.
 
+Every page needs a login. Demo accounts — **password = username**:
+`treasury`, `dealer-a`, `dealer-b`, `dealer-c`, `auditor`. `/signup` creates
+more, each bound to one of those seats.
+
 ## Screens
 
-| Route | Party | What it proves |
+| Route | Who may open it | What it proves |
 | --- | --- | --- |
-| `/` | — | Entitlements gate. Pick an operating identity. |
-| `/treasury` | Treasury | Raise an RFQ, rank all three prices, accept, drive settlement. |
-| `/dealer/a`, `/b`, `/c` | Dealer | Own price only. After close: closed RFQ, nothing about the winner. |
-| `/auditor` | Auditor | Settlement receipts only, with the read entitlement spelled out. |
-| `/demo` | Treasury + one dealer | Split view. Three prices on the left, one on the right. |
+| `/login`, `/signup` | anyone | Username + password; signup picks Treasury, Dealer (desk A/B/C) or Auditor. |
+| `/` | any signed-in user | Landing page listing only the desks this account may open. |
+| `/treasury` | Treasury accounts | Raise an RFQ, rank all three prices, accept, drive settlement. |
+| `/dealer/a`, `/b`, `/c` | that dealer's accounts | Own price only. After close: closed RFQ, nothing about the winner. |
+| `/auditor` | Auditor accounts | Settlement receipts only, with the read entitlement spelled out. |
+| `/demo` | Treasury accounts | Split view. Three prices on the left, one on the right. |
+
+## Accounts and sessions
+
+```
+lib/auth/access.ts            account shape, seat ↔ route policy (client-safe)
+lib/auth/validate.ts          signup rules; mirrors the Daml `validUsername`
+lib/auth/SessionProvider.tsx  the signed-in user, handed down from the root layout
+lib/auth/server/*             SERVER ONLY — scrypt hashes, signed cookie, account
+                              stores, `allowedParties`, login throttle
+app/api/auth/{login,signup,logout,session}/route.ts
+middleware.ts                 page routing: /login if anonymous, own desk if not yours
+```
+
+**Where accounts live.** On the default (canton) backend, accounts are the
+operator's `UserAccount` contracts (`TreasuryRfq.Accounts`). The server finds
+the `Operator` party by id hint (or `LEDGER_PARTY_OPERATOR`), reads its ACS to
+verify a login, and signs up by exercising `AccountDirectory.Register` as the
+operator — the ledger makes the username unique; a duplicate is a 409. Only the
+operator is a stakeholder on an account, so the password hash never reaches a
+desk. With `NEXT_PUBLIC_LEDGER=mock` the same flow runs on an in-memory store
+seeded with the same five accounts and hashes; signups last until restart.
+
+Hashes are `scrypt$N$r$p$<salt>$<key>` (base64url, keylen 32; new signups
+N=16384, r=8, p=1, 16-byte random salt), verified with a constant-time compare.
+Unknown usernames are verified against a decoy hash, and every credential
+failure says "Invalid username or password". Five failures per username and
+client address in 15 minutes return 429.
+
+**The session** is an HttpOnly, SameSite=Lax cookie `rfq_session` (Secure over
+HTTPS, 8-hour expiry) holding `{ username, userType, seat, exp }` signed with
+HMAC-SHA256. It names a **seat**, never a party id: the seat is resolved to the
+participant's current party on each request, so re-seeding the sandbox does not
+strand signed-in users. Set `SESSION_SECRET`; without it the server generates a
+random secret per process (and warns once), so a restart signs everyone out.
+`middleware.ts` runs on the Node.js runtime so it shares that per-process
+secret with the route handlers.
+
+**The privacy boundary is in the API, not the pages.** `/api/ledger/query` and
+`/api/ledger/command` answer 401 without a session and 403 unless `asParty` is a
+party the session may act as (`allowedParties` in `lib/auth/server/policy.ts`):
+its own seat's party — plus, for a Treasury session only, the three dealer
+parties, because the split "Compare views" screen reads a dealer desk and submits
+the seller's/buyer's settlement steps from one screen. The auditor and registry
+are never reachable that way. `/api/ledger/tip` and `/api/ledger/parties` need a
+session. Page redirects in `middleware.ts` are routing on top of that.
 
 ## The ledger seam
 
@@ -41,7 +93,7 @@ lib/ledger/canton.ts       live implementation — talks to this app's own /api/
 lib/ledger/index.ts        factory — the single swap point, chosen by NEXT_PUBLIC_LEDGER
 lib/ledger/config.ts       backend selection, endpoints, poll interval
 lib/ledger/wire.ts         request/response shapes shared by the client and the route handlers
-lib/ledger/parties.ts      the demo roles; their party ids are bound at runtime on a live ledger
+lib/ledger/parties.ts      the demo roles; party ids and labels are bound at runtime on a live ledger
 lib/ledger/provider.tsx    React context, useDesk / useCommand
 lib/ledger/selectors.ts    ranking, spreads, notionals
 lib/ledger/view.ts         party-scoped projection of a snapshot onto one RFQ
@@ -92,7 +144,7 @@ NEXT_PUBLIC_LEDGER=canton npm run dev
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `NEXT_PUBLIC_LEDGER` | `mock` | `canton` selects the live backend. Anything else keeps the fixture. |
+| `NEXT_PUBLIC_LEDGER` | `canton` | The live backend. Exactly `mock` selects the in-memory fixture instead. |
 | `LEDGER_NETWORK` | `sandbox` | Server-only profile: `sandbox`, `localnet`, or `devnet`. |
 | `LEDGER_JSON_API` | `http://127.0.0.1:6864` in sandbox | Participant JSON Ledger API base URL; required for LocalNet/DevNet. |
 | `LEDGER_JWT_TOKEN` | — | LocalNet bearer token, without the `Bearer` prefix. |
@@ -103,20 +155,27 @@ NEXT_PUBLIC_LEDGER=canton npm run dev
 | `NEXT_PUBLIC_LEDGER_POLL_MS` | `1500` | Ledger-end poll interval. |
 | `LEDGER_USER_ID` | `treasury-rfq-ui` | Must match the provisioned ledger user allowed by the token. |
 | `LEDGER_PARTY_TREASURY` … `_DEALER_A/B/C`, `_AUDITOR`, `_REGISTRY` | — | Pin a specific party id instead of resolving it. |
+| `LEDGER_PARTY_OPERATOR` | — | Pin the operator party (account directory, profiles, logins). Server-only; never sent to the browser. |
+| `SESSION_SECRET` | random per process | HMAC key for the session cookie. 32+ random characters. Set it for anything shared or restarted. |
 
-The default is `mock` on purpose: the app must build, boot and demo on a machine
-with no sandbox running, so an absent participant degrades to the fixture rather
-than failing.
+The default is the live ledger: the party directory and the login accounts are
+on it, so it is the system of record. Set `NEXT_PUBLIC_LEDGER=mock` explicitly to
+build, boot and demo on a machine with no sandbox. On the canton backend an
+absent participant still never fails the build or the boot — desks render empty
+and say the participant did not answer, and logins report the ledger unavailable.
 
 **Party ids are resolved at runtime.** A Canton party id is
 `<hint>-<disambiguator>::<fingerprint>` and the fingerprint changes with every
-fresh sandbox, so nothing is hardcoded. `GET /api/ledger/parties` lists the
-allocated parties and matches them to the demo roles by id hint (`Treasury`,
-`DealerA`, …); where a hint matches several parties — a sandbox seeded more than
-once holds `Treasury-1`, `Treasury-2`, … — the latest allocation wins, and
-`LEDGER_PARTY_*` overrides the choice. The root layout resolves them server-side
-and hands them to `<PartyBootstrap>`, so the server and the browser render the
-same ids.
+fresh sandbox, so nothing is hardcoded. The resolver
+(`lib/ledger/server/parties.ts`) prefers the operator's on-ledger `PartyProfile`
+contracts, which bind each seat to a party explicitly; a seat without a profile
+falls back to matching the allocated parties by id hint (`Treasury`, `DealerA`,
+…) — where a hint matches several (`Treasury-1`, `Treasury-2`, …) the latest
+allocation wins — and `LEDGER_PARTY_*` overrides both. The profiles also carry
+each seat's label and institution; the values in `lib/ledger/parties.ts` are the
+fallbacks (and what the mock shows). The root layout resolves all of it
+server-side and hands it to `<PartyBootstrap>`, so the server and the browser
+render the same ids and names.
 
 **Settlement carries an explicit disclosure.** `AllocatePaymentAndSettle` is
 exercised by the buyer but fetches the seller's `TokenHolding`, and the buyer is
@@ -165,11 +224,14 @@ user recognized by the participant. Pin all six `LEDGER_PARTY_*` ids when using
 managed party names or when party-list permission is unavailable; with all roles
 pinned, the app skips party discovery.
 
-**This is still a trusted local demo, not public authentication.** The app has no
-login and lets any caller select a desk. Its server credential can act for the
-provisioned parties. Keep the app on loopback; do not expose it through a tunnel.
-Never place tokens or client secrets in `NEXT_PUBLIC_*`, source control, screenshots,
-or browser requests. Per-user login and party authorization are separate work.
+**This is still a demo, not hardened public authentication.** Users sign in and
+the API only lets a session act as its own seat's party (plus the dealer seats for
+a Treasury session — see "Accounts and sessions"), but the server's ledger
+credential can still act for every provisioned party, and anyone who reaches the
+participant's ports directly bypasses the app entirely. Keep the app and the
+participant on loopback; do not expose them through a tunnel. Never place tokens,
+client secrets or `SESSION_SECRET` in `NEXT_PUBLIC_*`, source control,
+screenshots, or browser requests.
 
 To run only the frontend in Docker against an external participant:
 
@@ -191,7 +253,7 @@ sees only the final receipt. Configuration examples are placeholders, not
 credentials or pre-provisioned DevNet access.
 
 ```bash
-npm run test:ledger  # profile, JWT, Auth0 cache/refresh, adapter and disclosure tests
+npm run test:ledger  # profile, JWT, Auth0 cache/refresh, adapter, disclosure and auth tests
 npm run typecheck
 npx eslint .
 npm run build

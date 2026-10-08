@@ -8,6 +8,7 @@
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
     "test:ledger": "node scripts/test-ledger.cjs",
+    "test": "node scripts/test-ledger.cjs",
     "lint": "eslint ."
   },
   "dependencies": {

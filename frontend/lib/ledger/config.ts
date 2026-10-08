@@ -1,10 +1,13 @@
 /**
  * Ledger backend selection and endpoint plumbing.
  *
- * `NEXT_PUBLIC_LEDGER` is the single switch: `mock` (default) keeps the app
- * self-contained, `canton` points it at a live participant through this app's
- * own route handlers. A missing or unreachable ledger must never be a build or
- * boot failure — the demo has to run on a laptop with no sandbox.
+ * `NEXT_PUBLIC_LEDGER` is the single switch. The live participant (`canton`) is
+ * the DEFAULT: the party directory and the login accounts live on the ledger,
+ * so the ledger is the system of record and the app should be on it unless told
+ * otherwise. `NEXT_PUBLIC_LEDGER=mock` — exactly that value — opts into the
+ * self-contained in-memory fixture for a laptop with no sandbox. Either way a
+ * missing or unreachable ledger is never a build or boot failure: on canton the
+ * desks render empty and say the participant did not answer.
  *
  * The browser only ever learns `NEXT_PUBLIC_*` values. The JSON Ledger API base
  * URL is server-side only: no component, and no bundle, ever addresses the
@@ -13,9 +16,13 @@
 
 export type LedgerBackend = 'mock' | 'canton';
 
-/** Which implementation `getLedgerClient()` hands out. Defaults to the mock. */
+/**
+ * Which implementation `getLedgerClient()` hands out. Defaults to the live
+ * ledger; only an explicit `NEXT_PUBLIC_LEDGER=mock` selects the fixture, so a
+ * typo fails towards the real ledger rather than silently into a mock.
+ */
 export function ledgerBackend(): LedgerBackend {
-  return process.env.NEXT_PUBLIC_LEDGER === 'canton' ? 'canton' : 'mock';
+  return process.env.NEXT_PUBLIC_LEDGER === 'mock' ? 'mock' : 'canton';
 }
 
 /** Shown in the status rail. Host and port only; no scheme, no secrets. */

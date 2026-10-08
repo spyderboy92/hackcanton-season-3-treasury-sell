@@ -20,7 +20,7 @@ import type {
   Side,
   TokenHolding,
 } from './types';
-import type { DemoRole } from './parties';
+import type { DemoRole, DirectoryEntry } from './parties';
 
 /* ── reads ────────────────────────────────────────────────────────────── */
 
@@ -54,6 +54,8 @@ export interface PartiesResponse {
   ids: Record<DemoRole, Party>;
   unresolved: DemoRole[];
   source: 'mock' | 'participant';
+  /** Labels and institutions from the operator's on-ledger PartyProfiles. */
+  directory: Partial<Record<DemoRole, DirectoryEntry>>;
 }
 
 /* ── commands ─────────────────────────────────────────────────────────── */

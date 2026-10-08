@@ -1,11 +1,11 @@
 /**
  * Ledger factory. This is the single swap point.
  *
- * `NEXT_PUBLIC_LEDGER=canton` puts the app on a live participant (through this
- * app's own route handlers); anything else — including nothing at all — keeps
- * the in-memory fixture. The default matters: the app has to build, boot and
- * demo on a machine with no sandbox running, so a missing ledger degrades to
- * the mock rather than failing.
+ * By default the app is on a live participant (through this app's own route
+ * handlers) — the ledger holds the party directory and the login accounts, so
+ * it is the system of record. `NEXT_PUBLIC_LEDGER=mock`, set explicitly, keeps
+ * the in-memory fixture instead, for a machine with no sandbox running. See
+ * `ledgerBackend()` in ./config.ts.
  */
 
 import type { LedgerClient } from './client';

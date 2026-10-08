@@ -68,6 +68,12 @@ services:
       LEDGER_JSON_API: http://canton:6864
       NEXT_PUBLIC_LEDGER: canton
       LEDGER_USER_ID: treasury-rfq-ui
+      # HMAC key for the login session cookie. Pass one through from the host
+      # (`SESSION_SECRET=$(openssl rand -base64 48) docker compose up`) to keep
+      # users signed in across container restarts. Left empty, the app generates
+      # a random secret per container start and logs a warning; never commit a
+      # fixed value here, since anyone holding it can forge a treasury session.
+      SESSION_SECRET: ${SESSION_SECRET:-}
     depends_on:
       canton:
         condition: service_healthy

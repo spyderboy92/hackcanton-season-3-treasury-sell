@@ -11,6 +11,15 @@
 --   * holdings issued by Registry: Treasury 25 cETH, each dealer 1,000,000 USD
 --   * one Open RFQ: Treasury SELLS 10 cETH quoted in USD, inviting all three dealers
 --   * one RfqInvitation per dealer, each observed by that dealer alone
+--   * an Operator party (id hint @Operator@): the app operator the Next.js server acts
+--     as to read the directory and verify logins (HAC-12/13)
+--   * one empty AccountDirectory, signed by Operator
+--   * one PartyProfile per seat -- treasury, dealerA, dealerB, dealerC, auditor,
+--     registry -- carrying the label and institution the UI shows, each observed by the
+--     party it describes
+--   * five UserAccounts registered through AccountDirectory.Register: treasury,
+--     dealer-a, dealer-b, dealer-c, auditor, each with password == username (public
+--     demo credentials; see 'Tests.Fixtures.demoAccounts' for how the hashes are made)
 --
 -- What it deliberately does NOT create: any Quote, AcceptedTrade, SettlementInstruction
 -- or SettlementReceipt.
@@ -22,8 +31,12 @@
 -- >   --script-name Demo.Bootstrap:bootstrap \
 -- >   --ledger-host 127.0.0.1 --ledger-port 6865 --upload-dar true -w
 --
--- The party ids are printed at the end, one per line, ready to paste into the frontend
--- config.
+-- The party ids (including the operator's) and the demo usernames are printed at the
+-- end, one per line, ready to paste into the frontend config.
+--
+-- The per-script test runner discovers 'bootstrap' too, so @dpm test@ runs it end to end
+-- against the IDE ledger on every run: a seed that no longer type-checks or whose
+-- registrations violate an 'ensure' fails the suite rather than a live demo.
 module Demo.Bootstrap where
 
 import DA.Foldable (forA_)
@@ -31,11 +44,18 @@ import Daml.Script
 
 import Tests.Fixtures
 
+-- | What the seed produced: the open auction and the operator-side directory.
+data Bootstrapped = Bootstrapped with
+    rfq : OpenRfq
+    accounts : SeededAccounts
+  deriving (Eq, Show)
+
 -- | Seed the ledger and print the party ids.
-bootstrap : Script OpenRfq
+bootstrap : Script Bootstrapped
 bootstrap = do
   fx <- openRfq
   let p = fx.parties
+  seeded <- seedAccounts p
 
   debug "=================================================================="
   debug "Treasury RFQ demo seeded. Party ids for the frontend config:"
@@ -46,6 +66,7 @@ bootstrap = do
     , ("dealerC", p.dealerC)
     , ("auditor", p.auditor)
     , ("registry", p.registry)
+    , ("operator", seeded.operator)
     ]
     (\(label, party) -> debug (label <> ": " <> show party))
   debug "------------------------------------------------------------------"
@@ -54,6 +75,10 @@ bootstrap = do
   debug ("side: Sell  quantity: " <> show demoQuantity)
   debug ("quoteDeadline: " <> show fx.quoteDeadline)
   debug "Three invitations are outstanding; no quote has been submitted."
+  debug "------------------------------------------------------------------"
+  debug "Demo logins (password == username), registered under the operator:"
+  forA_ demoAccounts $ \a ->
+    debug ("  " <> a.username <> "  (" <> show a.userType <> ", seat " <> a.seat <> ")")
   debug "=================================================================="
 
-  pure fx
+  pure Bootstrapped with rfq = fx; accounts = seeded

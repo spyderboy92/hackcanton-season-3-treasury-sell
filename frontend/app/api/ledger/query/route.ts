@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { requireActingParty } from '@/lib/auth/server/request';
 import { readDesk } from '@/lib/ledger/server/ledger';
 import { errorResponse, readJson } from '@/lib/ledger/server/http';
 import { parseQueryRequest } from '@/lib/ledger/server/validate';
@@ -19,6 +20,7 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   try {
     const query = parseQueryRequest(await readJson<unknown>(request));
+    await requireActingParty(query.asParty);
     return NextResponse.json<QueryResponse>(await readDesk(query));
   } catch (cause) {
     return errorResponse(cause);
