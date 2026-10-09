@@ -11,9 +11,10 @@
 # so the stack must not be reachable from off the machine. See the note on the
 # canton service below.
 #
-#   docker compose run --rm tests   the 59-script Daml suite
-#   docker compose down             stop, keep ledger state
-#   docker compose down -v          stop, wipe ledger state
+#   docker compose run --rm tests              the Daml suite
+#   docker compose --profile tunnel up         app + Cloudflare Tunnel (UI only)
+#   docker compose down                        stop, keep ledger state
+#   docker compose down -v                     stop, wipe ledger state
 
 name: treasury-rfq
 
@@ -33,6 +34,8 @@ services:
     # posture — publishing them on 0.0.0.0 would put the privacy model this
     # project exists to demonstrate behind nothing whatsoever. Real deployments
     # put a JWT-validating participant in front; see AGENTS.md section 8.
+    # The `tunnel` profile must NEVER publish these ports: cloudflared may only
+    # reach the frontend service.
     ports:
       - "127.0.0.1:6864:6864"   # JSON Ledger API v2
       - "127.0.0.1:6865:6865"   # gRPC Ledger API
@@ -60,7 +63,7 @@ services:
         NEXT_PUBLIC_LEDGER_ENDPOINT: "localhost:6864 (Canton sandbox in Docker)"
     image: treasury-rfq-frontend
     ports:
-      - "127.0.0.1:3000:3000"   # loopback, for the same reason as the ledger ports
+      - "127.0.0.1:3000:3000"   # loopback; public reachability is via the tunnel profile
     environment:
       # Read server-side, inside this container: it must address the Canton
       # service by its compose hostname. 127.0.0.1 here would be this
@@ -68,6 +71,9 @@ services:
       LEDGER_JSON_API: http://canton:6864
       NEXT_PUBLIC_LEDGER: canton
       LEDGER_USER_ID: treasury-rfq-ui
+      # Public HTTPS origin when the tunnel profile is up (SSR self-fetches +
+      # absolute links). Leave unset for loopback-only demos.
+      APP_ORIGIN: ${APP_ORIGIN:-}
       # HMAC key for the login session cookie. Pass one through from the host
       # (`SESSION_SECRET=$(openssl rand -base64 48) docker compose up`) to keep
       # users signed in across container restarts. Left empty, the app generates
@@ -78,6 +84,26 @@ services:
       canton:
         condition: service_healthy
 
+  # Cloudflare Tunnel — UI only. Not part of plain `up`: enable with
+  # `--profile tunnel`. Remotely managed: create the tunnel in the Cloudflare
+  # dashboard, publish hostname → http://frontend:3000 (compose DNS name, not
+  # localhost — cloudflared runs inside this network), then pass TUNNEL_TOKEN.
+  # See env/tunnel.example. Never point a published route at canton:6864/6865.
+  tunnel:
+    image: cloudflare/cloudflared:2026.3.0
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    # Remotely managed: token from the dashboard. Soft default so plain
+    # `docker compose up` (no tunnel profile) still interpolates; with
+    # `--profile tunnel`, an empty token makes cloudflared exit — set
+    # TUNNEL_TOKEN first (env/tunnel.example).
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      frontend:
+        condition: service_started
+
   # `docker compose run --rm tests`. Not part of `up`: the profile keeps it out.
   tests:
     build:
@@ -87,7 +113,7 @@ services:
     image: treasury-rfq-tests
     profiles: ["tests"]
     # --all --show-coverage, not a bare `dpm test`. The model is a DATA-DEPENDENCY
-    # of the test package, so without --all the coverage report counts only this
+    # of the test package, so without `--all` the coverage report counts only this
     # package's own templates -- of which there are none -- and prints
     # "0 defined / 0 (100.0%)" for every category. The README quotes 8/8 and 19/19;
     # this is the invocation that produces those numbers. See AGENTS.md section 5.

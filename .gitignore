@@ -4,3 +4,6 @@ dist/
 node_modules/
 .next/
 /.omo/
+
+# Local tunnel secrets (copy from env/tunnel.example)
+env/tunnel.local
