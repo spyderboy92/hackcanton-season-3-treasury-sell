@@ -13,6 +13,10 @@ LEDGER_AUTH0_AUDIENCE=REPLACE_LEDGER_API_AUDIENCE
 # LEDGER_EXPLORER_URL=https://lighthouse.devnet.cantonloop.com
 # LEDGER_EXPLORER_URL=off
 
+# Login-page "Top up demo balances" mints TokenHolding as Registry. The ledger
+# user above must be allowed to actAs the Registry party (and pin it if needed):
+# LEDGER_PARTY_REGISTRY=treasuryos-Registry::REPLACE_FINGERPRINT
+
 # HMAC key for the login session cookie (32+ random chars, e.g. `openssl rand -base64 48`).
 # Unset: a random per-process secret is used and every restart signs users out.
 # SESSION_SECRET=<paste a long random value; do not reuse this placeholder>

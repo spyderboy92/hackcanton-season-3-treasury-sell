@@ -154,7 +154,7 @@ NEXT_PUBLIC_LEDGER=canton npm run dev
 | `LEDGER_EXPLORER_URL` | `https://lighthouse.devnet.cantonloop.com` on DevNet, unset elsewhere | **Server only.** HTTPS explorer for the settlement's ledger transaction id, linked as `<url>/transactions/<update id>`. `off` disables the link; the id is always shown. |
 | `NEXT_PUBLIC_LEDGER_ENDPOINT` | `127.0.0.1:6864` | What the status rail displays. |
 | `NEXT_PUBLIC_LEDGER_POLL_MS` | `1500` | Ledger-end poll interval. |
-| `LEDGER_USER_ID` | `treasury-rfq-ui` | Must match the provisioned ledger user allowed by the token. |
+| `LEDGER_USER_ID` | `treasury-rfq-ui` | Must match the provisioned ledger user allowed by the token. On DevNet, grant this user `actAs` Registry so the login-page balance faucet can mint holdings. |
 | `LEDGER_PARTY_TREASURY` … `_DEALER_A/B/C`, `_AUDITOR`, `_REGISTRY` | — | Pin a specific party id instead of resolving it. |
 | `LEDGER_PARTY_OPERATOR` | — | Pin the operator party (account directory, profiles, logins). Server-only; never sent to the browser. |
 | `SESSION_SECRET` | random per process | HMAC key for the session cookie. 32+ random characters. Set it for anything shared or restarted. |

@@ -60,3 +60,32 @@ export function clientAddress(request: Request): string {
     'local'
   );
 }
+
+/* ── DevNet balance faucet ────────────────────────────────────────────── */
+
+const TOPUP_COOLDOWN_MS = 60 * 1000;
+const TOPUP_MAX_KEYS = 10_000;
+
+const topUpStore: Map<string, number> =
+  ((globalThis as Record<string, unknown>).__rfqTopUpAt as Map<string, number> | undefined) ??
+  ((globalThis as Record<string, unknown>).__rfqTopUpAt = new Map<string, number>());
+
+/** Seconds until this address may top up again, or 0 if it may now. */
+export function topUpRetryAfter(ip: string, now = Date.now()): number {
+  const at = topUpStore.get(ip);
+  if (at === undefined) return 0;
+  const left = at + TOPUP_COOLDOWN_MS - now;
+  if (left <= 0) {
+    topUpStore.delete(ip);
+    return 0;
+  }
+  return Math.ceil(left / 1000);
+}
+
+export function recordTopUp(ip: string, now = Date.now()): void {
+  if (topUpStore.size >= TOPUP_MAX_KEYS) {
+    for (const [k, at] of topUpStore) if (now - at >= TOPUP_COOLDOWN_MS) topUpStore.delete(k);
+    if (topUpStore.size >= TOPUP_MAX_KEYS) topUpStore.clear();
+  }
+  topUpStore.set(ip, now);
+}

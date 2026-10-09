@@ -12,11 +12,13 @@ import { infoForRole } from '@/lib/ledger/parties';
 import { AuthField } from './AuthField';
 import { postJson } from './post';
 
-export function LoginForm({ next }: { next: string | null }) {
+export function LoginForm({ next, showTopUp = false }: { next: string | null; showTopUp?: boolean }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [topUpMessage, setTopUpMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [topUpBusy, setTopUpBusy] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
 
   const submit = async (event: FormEvent) => {
@@ -47,10 +49,28 @@ export function LoginForm({ next }: { next: string | null }) {
     setError(null);
   };
 
+  const topUp = async () => {
+    setTopUpBusy(true);
+    setError(null);
+    setTopUpMessage(null);
+    const result = await postJson<{ message?: string }>('/api/auth/topup', {});
+    setTopUpBusy(false);
+    if (result.ok) {
+      setTopUpMessage(result.data.message ?? 'Demo balances minted.');
+      return;
+    }
+    setError(result.message);
+  };
+
   return (
     <>
       <form ref={formRef} onSubmit={(e) => void submit(e)} noValidate className="space-y-4">
         {error ? <Notice onDismiss={() => setError(null)}>{error}</Notice> : null}
+        {topUpMessage ? (
+          <Notice tone="good" onDismiss={() => setTopUpMessage(null)}>
+            {topUpMessage}
+          </Notice>
+        ) : null}
         <AuthField label="Username">
           <TextInput
             name="username"
@@ -113,6 +133,28 @@ export function LoginForm({ next }: { next: string | null }) {
           })}
         </ul>
       </section>
+
+      {showTopUp ? (
+        <section aria-labelledby="demo-topup" className="mt-6 border-t border-line pt-5">
+          <h3 id="demo-topup" className="text-xs font-medium text-ink">
+            DevNet faucet
+          </h3>
+          <p className="mt-1 text-mini text-ink-3">
+            Mint another round of opening balances (Treasury 25 cETH; each dealer
+            1,000,000 USD). Additive — prior holdings stay.
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            busy={topUpBusy}
+            disabled={busy}
+            className="mt-3 w-full"
+            onClick={() => void topUp()}
+          >
+            Top up demo balances
+          </Button>
+        </section>
+      ) : null}
     </>
   );
 }
