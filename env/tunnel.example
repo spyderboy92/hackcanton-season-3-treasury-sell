@@ -2,7 +2,7 @@
 #
 # 1. Dashboard → Networking → Tunnels → Create.
 # 2. Published application route:
-#      Hostname:  https://rfq.example.com   (your zone)
+#      Hostname:  rfq-app.z12z.org
 #      Service:   http://frontend:3000      (compose DNS name — NOT localhost,
 #                                           and NEVER canton:6864 / :6865)
 # 3. Copy the tunnel token (eyJ…) into TUNNEL_TOKEN below.
@@ -11,13 +11,13 @@
 #      set -a && source env/tunnel.local && set +a
 #      docker compose --profile tunnel up
 #
-# Copy this file to env/tunnel.local (gitignored) and fill in real values.
-# Do not commit tokens or SESSION_SECRET.
+# Copy this file to env/tunnel.local (gitignored) and fill in TUNNEL_TOKEN /
+# SESSION_SECRET. Do not commit those secrets.
 
 TUNNEL_TOKEN=REPLACE_WITH_CLOUDFLARE_TUNNEL_TOKEN
 
 # Public HTTPS origin of the published hostname (no trailing slash).
-APP_ORIGIN=https://rfq.example.com
+APP_ORIGIN=https://rfq-app.z12z.org
 
 # Keep sessions across container restarts (32+ random chars).
 # SESSION_SECRET=$(openssl rand -base64 48)

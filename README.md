@@ -25,7 +25,7 @@ docker compose run --rm tests   # the 74-script Daml suite
 | localhost:6864 | Canton JSON Ledger API v2 |
 | localhost:6865 | Canton gRPC Ledger API |
 
-**Public Try URL (Cloudflare Tunnel).** Ledger ports stay on loopback; only the UI is published. Copy `env/tunnel.example` → `env/tunnel.local`, set `TUNNEL_TOKEN` / `APP_ORIGIN` / `SESSION_SECRET`, point the dashboard published route at `http://frontend:3000` (never `canton:6864`), then:
+**Public Try URL (Cloudflare Tunnel).** Target hostname: `https://rfq-app.z12z.org`. Ledger ports stay on loopback; only the UI is published. Copy `env/tunnel.example` → `env/tunnel.local`, set `TUNNEL_TOKEN` / `SESSION_SECRET`, point the dashboard published route at hostname `rfq-app.z12z.org` → service `http://frontend:3000` (never `canton:6864`), then:
 
 ```bash
 set -a && source env/tunnel.local && set +a
