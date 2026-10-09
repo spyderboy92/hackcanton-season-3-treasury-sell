@@ -8,7 +8,7 @@ try {
   const compile = spawnSync(process.execPath, [
     require.resolve('typescript/bin/tsc'),
     'lib/ledger/server/config.ts', 'lib/ledger/server/auth.ts', 'lib/ledger/server/json-api.ts',
-    'lib/ledger/server/explorer.ts',
+    'lib/ledger/server/explorer.ts', 'lib/ledger/server/topup.ts',
     // Login/session modules that are framework-free on purpose, so they can be
     // tested here. `lib/auth/server/request.ts` (next/headers) is not.
     'lib/auth/server/password.ts', 'lib/auth/server/session.ts', 'lib/auth/server/policy.ts',
@@ -18,7 +18,13 @@ try {
   ], { stdio: 'inherit' });
   if (compile.status !== 0) process.exitCode = compile.status ?? 1;
   else {
-    const tests = spawnSync(process.execPath, ['--test', 'tests/ledger-connection.test.cjs', 'tests/auth.test.cjs', 'tests/settlement-record.test.cjs'], {
+    const tests = spawnSync(process.execPath, [
+      '--test',
+      'tests/ledger-connection.test.cjs',
+      'tests/auth.test.cjs',
+      'tests/settlement-record.test.cjs',
+      'tests/topup.test.cjs',
+    ], {
       stdio: 'inherit', env: { ...process.env, TEST_LEDGER_BUILD: output },
     });
     process.exitCode = tests.status ?? 1;

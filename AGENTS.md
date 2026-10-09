@@ -917,7 +917,7 @@ untouched. See invariant 4.
 | `LEDGER_AUTH0_DOMAIN`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_AUDIENCE` | — | DevNet machine-to-machine grant settings, **server only**, never NEXT_PUBLIC. |
 | `NEXT_PUBLIC_LEDGER_ENDPOINT` | `127.0.0.1:6864` | What the status rail displays |
 | `NEXT_PUBLIC_LEDGER_POLL_MS` | `1500` | Ledger-end poll interval (min 250) |
-| `LEDGER_USER_ID` | `treasury-rfq-ui` | Provisioned ledger user recognized by the token on authenticated networks |
+| `LEDGER_USER_ID` | `treasury-rfq-ui` | Provisioned ledger user recognized by the token on authenticated networks. On DevNet, grant `actAs` Registry so `POST /api/auth/topup` can mint demo holdings. |
 | `LEDGER_EXPLORER_URL` | `https://lighthouse.devnet.cantonloop.com` on DevNet, unset elsewhere | **Server only.** HTTPS explorer for the settlement's ledger transaction id, linked as `<url>/transactions/<update id>`. `off` disables the link; the id is always shown. |
 | `APP_ORIGIN` | `http://127.0.0.1:3000` | Where server-side fetches address this app |
 | `LEDGER_PARTY_*` | — | Pin a party id instead of resolving it |
@@ -936,6 +936,13 @@ transport in `server/json-api.ts`. No command or stakeholder shape changes.
 External profiles must supply an endpoint and credentials; there is no fallback
 to an unauthenticated participant. Auth0 grant failures and HTTP 401/403 responses
 are redacted before returning errors to the browser.
+
+On DevNet, the login page shows **Top up demo balances** when
+`LEDGER_NETWORK=devnet`. That posts to `/api/auth/topup` (no session), which
+submits four sibling `create TokenHolding` commands as Registry — the same
+opening amounts as Bootstrap (Treasury 25 cETH; each dealer 1,000,000 USD).
+Additive only; rate-limited per client address. The ledger user must be allowed
+to `actAs` Registry.
 
 The app login is **not a participant-level identity**: users sign in to the app,
 but the server still holds one ledger credential that can act for every demo

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { AuthFrame } from '@/components/auth/AuthFrame';
 import { LoginForm } from '@/components/auth/LoginForm';
+import { topUpEnabled } from '@/lib/ledger/server/topup';
 
 export const metadata: Metadata = { title: 'Sign in — Treasury RFQ' };
 
@@ -18,7 +19,7 @@ export default async function LoginPage({
   const { next } = await searchParams;
   return (
     <AuthFrame eyebrow="Sign in" title="Open your desk">
-      <LoginForm next={typeof next === 'string' ? next : null} />
+      <LoginForm next={typeof next === 'string' ? next : null} showTopUp={topUpEnabled()} />
     </AuthFrame>
   );
 }
