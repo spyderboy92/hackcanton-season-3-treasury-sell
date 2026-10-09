@@ -318,7 +318,11 @@ function parse<T>(text: string): T | null {
 function pick<T>(contracts: WireContract[], template: LedgerTemplate): Contract<T>[] {
   return contracts
     .filter((c) => c.template === template)
-    .map((c) => ({ contractId: c.contractId, payload: c.payload as T }));
+    .map((c) => ({
+      contractId: c.contractId,
+      payload: c.payload as T,
+      ...(c.record ? { record: c.record } : {}),
+    }));
 }
 
 /**

@@ -9,8 +9,8 @@
  */
 
 import { LedgerError, type LedgerTemplate } from '../client';
-import type { CommandRequest, CommandResponse, QueryRequest, QueryResponse } from '../wire';
-import type { Contract } from '../types';
+import type { CommandRequest, CommandResponse, QueryRequest, QueryResponse, WireContract } from '../wire';
+import type { Contract, LedgerRecord, Party } from '../types';
 import {
   ALL_TEMPLATES,
   activeContracts,
@@ -23,6 +23,8 @@ import {
   requireCreated,
   submit,
   transactions,
+  updateIdAt,
+  type CreatedEvent,
   type DisclosedContract,
   type LedgerCommand,
   type Transaction,
@@ -38,6 +40,7 @@ import {
   decodeTrade,
   eventsFrom,
 } from './decode';
+import { explorerUrlForUpdate } from './explorer';
 
 /* ── reads ────────────────────────────────────────────────────────────── */
 
@@ -52,16 +55,43 @@ export async function readDesk(request: QueryRequest): Promise<QueryResponse> {
     request.events ? transactions(asParty, offset) : Promise.resolve([]),
   ]);
 
+  const contracts = await Promise.all(
+    created.map(async (event): Promise<WireContract | null> => {
+      const decoded = decodeCreated(event);
+      if (!decoded) return null;
+      if (decoded.template !== 'SettlementReceipt') return decoded;
+      const record = await recordFor(asParty, event);
+      return record ? { ...decoded, record } : decoded;
+    }),
+  );
+
   return {
     asParty,
     at: new Date().toISOString(),
     offset,
-    contracts: created.flatMap((event) => {
-      const decoded = decodeCreated(event);
-      return decoded ? [decoded] : [];
-    }),
+    contracts: contracts.filter((c): c is WireContract => c !== null),
     events: eventsFrom(txs),
   };
+}
+
+/**
+ * The transaction that settled a trade, for a receipt in this party's ACS.
+ * Every desk that can see the receipt can see that transaction, so the id is
+ * looked up as the reading party and nobody wider. A failed lookup leaves the
+ * receipt without its id rather than failing the whole desk read.
+ */
+async function recordFor(asParty: Party, event: CreatedEvent): Promise<LedgerRecord | null> {
+  try {
+    const updateId = await updateIdAt(asParty, event.offset, ['SettlementReceipt']);
+    return ledgerRecord(updateId, event.offset);
+  } catch (cause) {
+    console.warn(`[ledger] no update id for receipt at offset ${event.offset}:`, (cause as Error).message);
+    return null;
+  }
+}
+
+function ledgerRecord(updateId: string, offset: number): LedgerRecord {
+  return { updateId, offset, explorerUrl: explorerUrlForUpdate(updateId) };
 }
 
 /* ── commands ─────────────────────────────────────────────────────────── */
@@ -235,7 +265,11 @@ export async function runCommand(request: CommandRequest): Promise<CommandRespon
       );
       return {
         offset: tx.offset,
-        receipt: contractOf(tx, 'SettlementReceipt', decodeReceipt),
+        receipt: {
+          ...contractOf(tx, 'SettlementReceipt', decodeReceipt),
+          // The id of THIS transaction: both legs and the receipt committed in it.
+          record: ledgerRecord(tx.updateId, tx.offset),
+        },
         // Both legs moved in this same transaction; hand back the holdings the
         // acting party can now see so the UI need not guess.
         holdings: createdIn(tx, 'TokenHolding').map((event) => ({

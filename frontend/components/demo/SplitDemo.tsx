@@ -11,6 +11,7 @@ import { Sealed } from '@/components/primitives/Sealed';
 import { Amount } from '@/components/primitives/Value';
 import { ActivityTape } from '@/components/rfq/ActivityTape';
 import { DealerQuoteBook } from '@/components/rfq/DealerQuoteBook';
+import { LedgerRecordRef } from '@/components/rfq/LedgerRecordRef';
 import { QuoteBook } from '@/components/rfq/QuoteBook';
 import { RfqRef } from '@/components/rfq/RfqRef';
 import { multiply } from '@/lib/decimal';
@@ -217,7 +218,8 @@ export function SplitDemo() {
                     <>
                       <Amount value={tView.receipt.payload.paymentAmount} dp={2} />{' '}
                       {tView.receipt.payload.quoteCurrency} received from{' '}
-                      {partyLabel(tView.receipt.payload.buyer)}
+                      {partyLabel(tView.receipt.payload.buyer)} · ledger tx{' '}
+                      <LedgerRecordRef record={tView.receipt.record} />
                     </>
                   }
                 />

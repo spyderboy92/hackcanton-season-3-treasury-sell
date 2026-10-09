@@ -9,3 +9,7 @@ LEDGER_JWT_TOKEN=REPLACE_WITH_JWT
 # SESSION_SECRET=<paste a long random value; do not reuse this placeholder>
 # Optional: pin the operator party (signatory of the account directory and party profiles).
 # LEDGER_PARTY_OPERATOR=treasuryos-Operator::REPLACE_FINGERPRINT
+
+# Optional: link settled trades' ledger transaction ids to an HTTPS explorer
+# (<url>/updates/<update id>/). Unset here, the id is shown without a link.
+# LEDGER_EXPLORER_URL=https://devnet.ccview.io

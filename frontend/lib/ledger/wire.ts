@@ -11,6 +11,7 @@ import type {
   ContractId,
   Decimal,
   Instant,
+  LedgerRecord,
   Party,
   Quote,
   Rfq,
@@ -36,6 +37,7 @@ export interface WireContract {
   template: LedgerTemplate;
   contractId: ContractId;
   payload: unknown;
+  record?: LedgerRecord;
 }
 
 export interface QueryResponse {

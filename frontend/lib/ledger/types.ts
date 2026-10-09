@@ -32,10 +32,25 @@ export type Instant = string;
 export type Side = 'Buy' | 'Sell';
 export type RfqStatus = 'Open' | 'Closed' | 'Cancelled';
 
+/**
+ * The committed transaction that created a contract: Canton's update id, plus
+ * where to look it up when the network has a public explorer (CCView on DevNet).
+ * The server decides `explorerUrl`; the browser never builds one.
+ */
+export interface LedgerRecord {
+  /** Canton update id — the ledger transaction id. */
+  updateId: string;
+  /** Participant offset of that transaction; null in the mock, which has none. */
+  offset: number | null;
+  explorerUrl: string | null;
+}
+
 /** A contract as returned by the ledger: an id plus its payload. */
 export interface Contract<T> {
   contractId: ContractId;
   payload: T;
+  /** Set on settlement receipts: the transaction that settled the trade. */
+  record?: LedgerRecord;
 }
 
 /** Shared market request. Terms only — never a price. */

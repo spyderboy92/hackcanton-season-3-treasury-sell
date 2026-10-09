@@ -10,6 +10,8 @@ import { institutionOf, partyLabel } from '@/lib/ledger/parties';
 import { buyerOf, sellerOf, type Party } from '@/lib/ledger/types';
 import type { RfqView } from '@/lib/ledger/view';
 
+import { LedgerRecordRef } from './LedgerRecordRef';
+
 interface Step {
   title: string;
   detail: React.ReactNode;
@@ -171,8 +173,15 @@ export function SettlementLadder({
           <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-line bg-pos-wash px-4 py-2.5">
             <span className="text-mini text-ink-2">Receipt issued</span>
             <Timestamp iso={receipt.payload.settledAt} />
-            <span className="num text-mini text-ink-3" title={receipt.contractId}>
-              {receipt.contractId.slice(0, 14)}…
+            <span className="inline-flex items-baseline gap-2" data-testid="settlement-ledger-tx">
+              <span className="text-mini text-ink-3">Ledger tx</span>
+              <LedgerRecordRef record={receipt.record} keep={16} />
+            </span>
+            <span className="inline-flex items-baseline gap-2">
+              <span className="text-mini text-ink-3">Receipt</span>
+              <span className="num text-mini text-ink-3" title={receipt.contractId}>
+                {receipt.contractId.slice(0, 14)}…
+              </span>
             </span>
             <span className="ml-auto text-mini text-ink-2">
               {receipt.payload.auditor
