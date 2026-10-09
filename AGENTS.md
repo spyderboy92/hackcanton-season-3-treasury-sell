@@ -918,7 +918,7 @@ untouched. See invariant 4.
 | `NEXT_PUBLIC_LEDGER_ENDPOINT` | `127.0.0.1:6864` | What the status rail displays |
 | `NEXT_PUBLIC_LEDGER_POLL_MS` | `1500` | Ledger-end poll interval (min 250) |
 | `LEDGER_USER_ID` | `treasury-rfq-ui` | Provisioned ledger user recognized by the token on authenticated networks |
-| `LEDGER_EXPLORER_URL` | `https://devnet.ccview.io` on DevNet, unset elsewhere | **Server only.** HTTPS explorer for the settlement's ledger transaction id, linked as `<url>/updates/<update id>/`. `off` disables the link; the id is always shown. |
+| `LEDGER_EXPLORER_URL` | `https://lighthouse.devnet.cantonloop.com` on DevNet, unset elsewhere | **Server only.** HTTPS explorer for the settlement's ledger transaction id, linked as `<url>/transactions/<update id>`. `off` disables the link; the id is always shown. |
 | `APP_ORIGIN` | `http://127.0.0.1:3000` | Where server-side fetches address this app |
 | `LEDGER_PARTY_*` | — | Pin a party id instead of resolving it |
 | `LEDGER_PARTY_OPERATOR` | — | Pin the operator party (directory, profiles, logins). **Server only**; never sent to the browser. |

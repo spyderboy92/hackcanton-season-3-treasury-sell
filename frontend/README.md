@@ -151,7 +151,7 @@ NEXT_PUBLIC_LEDGER=canton npm run dev
 | `LEDGER_AUTH0_DOMAIN` | — | DevNet Auth0 tenant host (or HTTPS origin). |
 | `LEDGER_AUTH0_CLIENT_ID`, `LEDGER_AUTH0_CLIENT_SECRET` | — | DevNet machine-to-machine application credentials. |
 | `LEDGER_AUTH0_AUDIENCE` | — | Audience expected by the DevNet participant. |
-| `LEDGER_EXPLORER_URL` | `https://devnet.ccview.io` on DevNet, unset elsewhere | **Server only.** HTTPS explorer for the settlement's ledger transaction id, linked as `<url>/updates/<update id>/`. `off` disables the link; the id is always shown. |
+| `LEDGER_EXPLORER_URL` | `https://lighthouse.devnet.cantonloop.com` on DevNet, unset elsewhere | **Server only.** HTTPS explorer for the settlement's ledger transaction id, linked as `<url>/transactions/<update id>`. `off` disables the link; the id is always shown. |
 | `NEXT_PUBLIC_LEDGER_ENDPOINT` | `127.0.0.1:6864` | What the status rail displays. |
 | `NEXT_PUBLIC_LEDGER_POLL_MS` | `1500` | Ledger-end poll interval. |
 | `LEDGER_USER_ID` | `treasury-rfq-ui` | Must match the provisioned ledger user allowed by the token. |

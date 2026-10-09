@@ -13,10 +13,13 @@ afterEach(() => {
   global.fetch = originalFetch;
 });
 
-test('DevNet links an update to CCView by default', () => {
+test('DevNet links an update to Lighthouse by default', () => {
   const env = { LEDGER_NETWORK: 'devnet' };
-  assert.equal(explorerBase(env), 'https://devnet.ccview.io');
-  assert.equal(explorerUrlForUpdate(UPDATE_ID, env), `https://devnet.ccview.io/updates/${UPDATE_ID}/`);
+  assert.equal(explorerBase(env), 'https://lighthouse.devnet.cantonloop.com');
+  assert.equal(
+    explorerUrlForUpdate(UPDATE_ID, env),
+    `https://lighthouse.devnet.cantonloop.com/transactions/${UPDATE_ID}`,
+  );
 });
 
 test('sandbox and LocalNet show the id without a link', () => {
@@ -27,14 +30,23 @@ test('sandbox and LocalNet show the id without a link', () => {
 
 test('LEDGER_EXPLORER_URL overrides, and off disables, the explorer', () => {
   assert.equal(
-    explorerUrlForUpdate(UPDATE_ID, { LEDGER_NETWORK: 'localnet', LEDGER_EXPLORER_URL: 'https://testnet.ccview.io/' }),
-    `https://testnet.ccview.io/updates/${UPDATE_ID}/`,
+    explorerUrlForUpdate(UPDATE_ID, {
+      LEDGER_NETWORK: 'localnet',
+      LEDGER_EXPLORER_URL: 'https://lighthouse.testnet.cantonloop.com/',
+    }),
+    `https://lighthouse.testnet.cantonloop.com/transactions/${UPDATE_ID}`,
   );
   assert.equal(explorerUrlForUpdate(UPDATE_ID, { LEDGER_NETWORK: 'devnet', LEDGER_EXPLORER_URL: 'off' }), null);
 });
 
 test('an unsafe explorer URL disables links instead of reaching the browser', () => {
-  for (const bad of ['http://devnet.ccview.io', 'javascript:alert(1)', 'https://u:p@x.example', 'https://x.example/?q=1', 'not a url']) {
+  for (const bad of [
+    'http://lighthouse.devnet.cantonloop.com',
+    'javascript:alert(1)',
+    'https://u:p@x.example',
+    'https://x.example/?q=1',
+    'not a url',
+  ]) {
     assert.equal(explorerUrlForUpdate(UPDATE_ID, { LEDGER_NETWORK: 'devnet', LEDGER_EXPLORER_URL: bad }), null, bad);
   }
 });
@@ -42,7 +54,7 @@ test('an unsafe explorer URL disables links instead of reaching the browser', ()
 test('the update id is encoded into the path', () => {
   assert.equal(
     explorerUrlForUpdate('a/b?c', { LEDGER_NETWORK: 'devnet' }),
-    'https://devnet.ccview.io/updates/a%2Fb%3Fc/',
+    'https://lighthouse.devnet.cantonloop.com/transactions/a%2Fb%3Fc',
   );
 });
 
