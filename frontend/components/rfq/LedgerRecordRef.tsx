@@ -7,7 +7,7 @@ import type { LedgerRecord } from '@/lib/ledger/types';
 
 /**
  * The ledger transaction that settled a trade. The id is always shown; it is a
- * link only when the server named an explorer for this network (CCView on
+ * link only when the server named an explorer for this network (Lighthouse on
  * DevNet), so the sandbox never renders a link that goes nowhere.
  */
 export function LedgerRecordRef({

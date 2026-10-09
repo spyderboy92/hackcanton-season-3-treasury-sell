@@ -8,8 +8,9 @@ LEDGER_AUTH0_CLIENT_SECRET=REPLACE_CLIENT_SECRET
 LEDGER_AUTH0_AUDIENCE=REPLACE_LEDGER_API_AUDIENCE
 
 # Settled trades show their ledger transaction (update) id, linked to
-# https://devnet.ccview.io/updates/<id>/ by default on DevNet. Override or turn off:
-# LEDGER_EXPLORER_URL=https://devnet.ccview.io
+# https://lighthouse.devnet.cantonloop.com/transactions/<id> by default on DevNet.
+# Override or turn off:
+# LEDGER_EXPLORER_URL=https://lighthouse.devnet.cantonloop.com
 # LEDGER_EXPLORER_URL=off
 
 # HMAC key for the login session cookie (32+ random chars, e.g. `openssl rand -base64 48`).

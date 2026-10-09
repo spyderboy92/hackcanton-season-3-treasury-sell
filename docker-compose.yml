@@ -81,7 +81,7 @@ services:
       # fixed value here, since anyone holding it can forge a treasury session.
       SESSION_SECRET: ${SESSION_SECRET:-}
       # Explorer for the settlement's ledger transaction id. Unset in the
-      # sandbox, so the id is shown as plain text; DevNet defaults to CCView.
+      # sandbox, so the id is shown as plain text; DevNet defaults to Lighthouse.
       LEDGER_EXPLORER_URL: ${LEDGER_EXPLORER_URL:-}
     depends_on:
       canton:

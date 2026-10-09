@@ -1,17 +1,17 @@
 /**
  * Links from a ledger transaction to a public block explorer. SERVER ONLY.
  *
- * DevNet has one (CCView), so a settled trade's update id becomes a link there
- * by default. The sandbox and LocalNet have none: their ids are shown as plain
- * text. `LEDGER_EXPLORER_URL` overrides the default for any network (a TestNet
- * explorer, a self-hosted one), and `off` turns links off on DevNet too.
+ * DevNet has one (Lighthouse), so a settled trade's update id becomes a link
+ * there by default. The sandbox and LocalNet have none: their ids are shown as
+ * plain text. `LEDGER_EXPLORER_URL` overrides the default for any network (a
+ * TestNet explorer, a self-hosted one), and `off` turns links off on DevNet too.
  *
- * CCView indexes what the Global Synchronizer's Scan service publishes. A
- * private transaction between two desks may not be indexed there; the link is
- * still the right place to look it up, and the id itself is always shown.
+ * A private transaction between two desks may not be indexed on the public
+ * explorer; the link is still the right place to look it up, and the id itself
+ * is always shown.
  */
 
-const DEVNET_EXPLORER = 'https://devnet.ccview.io';
+const DEVNET_EXPLORER = 'https://lighthouse.devnet.cantonloop.com';
 
 export function explorerBase(env: NodeJS.ProcessEnv = process.env): string | null {
   const configured = env.LEDGER_EXPLORER_URL?.trim();
@@ -22,11 +22,11 @@ export function explorerBase(env: NodeJS.ProcessEnv = process.env): string | nul
   return (env.LEDGER_NETWORK ?? 'sandbox') === 'devnet' ? DEVNET_EXPLORER : null;
 }
 
-/** `<explorer>/updates/<update id>/`, CCView's page for one transaction. */
+/** `<explorer>/transactions/<update id>`, Lighthouse's page for one transaction. */
 export function explorerUrlForUpdate(updateId: string, env: NodeJS.ProcessEnv = process.env): string | null {
   const base = explorerBase(env);
   if (!base || !updateId) return null;
-  return `${base}/updates/${encodeURIComponent(updateId)}/`;
+  return `${base}/transactions/${encodeURIComponent(updateId)}`;
 }
 
 /**

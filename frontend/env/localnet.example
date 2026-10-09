@@ -11,5 +11,5 @@ LEDGER_JWT_TOKEN=REPLACE_WITH_JWT
 # LEDGER_PARTY_OPERATOR=treasuryos-Operator::REPLACE_FINGERPRINT
 
 # Optional: link settled trades' ledger transaction ids to an HTTPS explorer
-# (<url>/updates/<update id>/). Unset here, the id is shown without a link.
-# LEDGER_EXPLORER_URL=https://devnet.ccview.io
+# (<url>/transactions/<update id>). Unset here, the id is shown without a link.
+# LEDGER_EXPLORER_URL=https://lighthouse.devnet.cantonloop.com

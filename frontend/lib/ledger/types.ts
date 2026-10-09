@@ -34,7 +34,7 @@ export type RfqStatus = 'Open' | 'Closed' | 'Cancelled';
 
 /**
  * The committed transaction that created a contract: Canton's update id, plus
- * where to look it up when the network has a public explorer (CCView on DevNet).
+ * where to look it up when the network has a public explorer (Lighthouse on DevNet).
  * The server decides `explorerUrl`; the browser never builds one.
  */
 export interface LedgerRecord {

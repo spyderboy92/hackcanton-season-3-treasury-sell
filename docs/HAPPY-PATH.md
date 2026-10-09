@@ -59,7 +59,8 @@ Same trade, one account at a time. Use this if you want to feel each seat.
 2. On Settlement, click **Allocate payment and settle**.  
    Receipt appears; both legs moved in one transaction. The Settlement panel
    shows **Ledger tx** — the Canton update id of that transaction (`1220…`).
-   On DevNet it links to CCView (`https://devnet.ccview.io/updates/<id>/`);
+   On DevNet it links to Lighthouse
+   (`https://lighthouse.devnet.cantonloop.com/transactions/<id>`);
    on the sandbox it is plain text with a copy button.
 
 ### 4. Privacy checks
