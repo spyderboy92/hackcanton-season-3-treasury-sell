@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { fingerprintOf, hintOf, institutionOf, partyLabel } from '@/lib/ledger/parties';
+import { fingerprintOf, institutionOf, partyLabel, shortHintOf } from '@/lib/ledger/parties';
 import type { Party } from '@/lib/ledger/types';
 
 /** Party id rendered the way a ledger operator expects to see it. */
@@ -15,7 +15,7 @@ export function PartyId({
   const fp = fingerprintOf(party);
   return (
     <span className={cn('num text-mini text-ink-3', className)} title={party}>
-      <span className="text-ink-2">{hintOf(party)}</span>
+      <span className="text-ink-2">{shortHintOf(party)}</span>
       {fp ? (
         <>
           <span className="text-ink-4">::</span>

@@ -8,15 +8,15 @@
  *
  * Three sources, strongest last:
  *
- *   1. id-hint matching over the participant's party list (Treasury, DealerA,
- *      DealerB, DealerC, Auditor, Registry — what `Demo.Bootstrap` allocates);
+ *   1. id-hint matching over the participant's party list (prefixed hints from
+ *      `PARTY_HINTS` — what `Demo.Bootstrap` allocates);
  *   2. the operator's `PartyProfile` contracts (`TreasuryRfq.Accounts`), which
  *      bind each seat to a party explicitly and carry its label and
  *      institution. Preferred over hints because they say which party the
  *      seed MEANT, rather than guessing from a suffix;
  *   3. `LEDGER_PARTY_*` overrides, which always win.
  *
- * The operator is resolved the same way (hint `Operator`, override
+ * The operator is resolved the same way (hint `OPERATOR_HINT`, override
  * `LEDGER_PARTY_OPERATOR`) but is NOT a demo role: no desk acts as it and it is
  * never sent to the browser. It is the identity the server uses to read the
  * directory and the login accounts — see `resolveOperator`.
@@ -29,6 +29,7 @@ import { connection } from 'next/server';
 
 import { ledgerBackend } from '../config';
 import {
+  OPERATOR_HINT,
   PARTY_HINTS,
   PLACEHOLDER_PARTY_IDS,
   applyPartyDirectory,
@@ -57,8 +58,7 @@ const ENV_OVERRIDE: Record<DemoRole, string> = {
   registry: 'LEDGER_PARTY_REGISTRY',
 };
 
-/** The app operator: signatory of the directory and of every login account. */
-const OPERATOR_HINT = 'Operator';
+/** Env pin for the app operator (directory / logins). Server only. */
 const OPERATOR_OVERRIDE = 'LEDGER_PARTY_OPERATOR';
 
 const ROLES = Object.keys(PARTY_HINTS) as DemoRole[];
