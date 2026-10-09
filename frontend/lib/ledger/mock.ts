@@ -37,6 +37,7 @@ import {
   type Contract,
   type ContractId,
   type Instant,
+  type LedgerRecord,
   type Party,
   type Quote,
   type Rfq,
@@ -66,6 +67,8 @@ interface Row<T> {
   contractId: ContractId;
   payload: T;
   archived: boolean;
+  /** Receipts only: the mock transaction that settled the trade. */
+  record?: LedgerRecord;
 }
 
 interface Store {
@@ -132,7 +135,7 @@ const stakeholders = {
 function readable<T>(rows: Row<T>[], asParty: Party, witnesses: (p: T) => Party[]): Contract<T>[] {
   return rows
     .filter((r) => !r.archived && witnesses(r.payload).includes(asParty))
-    .map((r) => ({ contractId: r.contractId, payload: r.payload }));
+    .map(contract);
 }
 
 function byRfq<T extends { rfqId: string }>(rows: Contract<T>[], filter?: RfqFilter): Contract<T>[] {
@@ -477,6 +480,9 @@ export class MockLedgerClient implements LedgerClient {
       settledAt: now(),
     };
     const row = this.create(this.store.receipts, receipt);
+    // No participant, so no offset and nothing for an explorer to resolve; the
+    // id has Canton's shape so the screen looks the same as against a ledger.
+    row.record = { updateId: this.updateId(), offset: null, explorerUrl: null };
     this.log('SettlementReceipt', i.rfqId, stakeholders.receipt(receipt), 'Delivery versus payment settled');
     this.emit();
     return contract(row);
@@ -549,6 +555,11 @@ export class MockLedgerClient implements LedgerClient {
 
   private cid(): ContractId {
     return `00${this.hex(0x5eed, 62)}`;
+  }
+
+  /** Canton update ids are a multihash: `1220` + 32 bytes of hex. */
+  private updateId(): string {
+    return `1220${this.hex(0x7a11, 64)}`;
   }
 
   private uuid(): string {
@@ -726,7 +737,11 @@ export class MockLedgerClient implements LedgerClient {
 /* ── small helpers ────────────────────────────────────────────────────── */
 
 function contract<T>(row: Row<T>): Contract<T> {
-  return { contractId: row.contractId, payload: row.payload };
+  return {
+    contractId: row.contractId,
+    payload: row.payload,
+    ...(row.record ? { record: row.record } : {}),
+  };
 }
 
 function now(): Instant {

@@ -376,6 +376,48 @@ export async function transactions(
   return rows.flatMap((r) => (r.update?.Transaction ? [r.update.Transaction.value] : []));
 }
 
+/**
+ * The update id (ledger transaction id) committed at `offset`, looked up as the
+ * acting party. An ACS row carries the offset that created it but not the id,
+ * and both are immutable once committed, so answers are remembered.
+ *
+ * The cache is keyed by party as well as offset: a party only ever learns the
+ * id of a transaction the participant itself shows it.
+ */
+const UPDATE_IDS_KEY = '__rfqUpdateIdsByOffset';
+const UPDATE_IDS_LIMIT = 1_000;
+
+export async function updateIdAt(asParty: Party, offset: number, templates: WireTemplate[]): Promise<string> {
+  const g = globalThis as Record<string, unknown>;
+  const cache = ((g[UPDATE_IDS_KEY] as Map<string, string> | undefined) ??= new Map<string, string>());
+  const key = `${asParty}@${offset}`;
+  const known = cache.get(key);
+  if (known) return known;
+
+  const response = await call<{ update?: { Transaction?: { value: Transaction } } }>(
+    '/v2/updates/update-by-offset',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        offset,
+        updateFormat: {
+          includeTransactions: {
+            transactionShape: 'TRANSACTION_SHAPE_ACS_DELTA',
+            eventFormat: filtersFor(asParty, templates),
+          },
+        },
+      }),
+    },
+  );
+  const updateId = response?.update?.Transaction?.value.updateId;
+  if (!updateId) {
+    throw new LedgerError('NOT_FOUND', `The participant returned no transaction at offset ${offset}.`);
+  }
+  if (cache.size >= UPDATE_IDS_LIMIT) cache.clear();
+  cache.set(key, updateId);
+  return updateId;
+}
+
 /* ── writes ───────────────────────────────────────────────────────────── */
 
 export interface ExerciseCommand {

@@ -5,6 +5,7 @@ import { Timestamp } from '@/components/primitives/Timestamp';
 import { partyLabel } from '@/lib/ledger/parties';
 import type { Contract, SettlementReceipt } from '@/lib/ledger/types';
 
+import { LedgerRecordRef } from './LedgerRecordRef';
 import { RfqRef } from './RfqRef';
 
 /** Immutable post-trade evidence. The only thing an auditor is on. */
@@ -20,11 +21,12 @@ export function ReceiptTable({ receipts }: { receipts: Contract<SettlementReceip
           <Th align="right">Consideration</Th>
           <Th>Seller</Th>
           <Th>Buyer</Th>
+          <Th>Ledger tx</Th>
           <Th className="hidden xl:table-cell">Contract</Th>
         </tr>
       </thead>
       <tbody>
-        {receipts.map(({ contractId, payload }) => (
+        {receipts.map(({ contractId, payload, record }) => (
           <tr key={contractId} className="bg-pos-wash">
             <Td>
               <Timestamp iso={payload.settledAt} className="text-xs text-ink" />
@@ -50,6 +52,9 @@ export function ReceiptTable({ receipts }: { receipts: Contract<SettlementReceip
             <Td>
               <div className="text-ink">{partyLabel(payload.buyer)}</div>
               <PartyId party={payload.buyer} keep={4} />
+            </Td>
+            <Td>
+              <LedgerRecordRef record={record} />
             </Td>
             <Td className="hidden xl:table-cell">
               <span className="num text-mini text-ink-3" title={contractId}>

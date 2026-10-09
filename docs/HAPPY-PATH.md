@@ -57,7 +57,10 @@ Same trade, one account at a time. Use this if you want to feel each seat.
 
 1. Sign in as `dealer-b`; you land on Brightwater Capital (Dealer B).
 2. On Settlement, click **Allocate payment and settle**.  
-   Receipt appears; both legs moved in one transaction.
+   Receipt appears; both legs moved in one transaction. The Settlement panel
+   shows **Ledger tx** — the Canton update id of that transaction (`1220…`).
+   On DevNet it links to CCView (`https://devnet.ccview.io/updates/<id>/`);
+   on the sandbox it is plain text with a copy button.
 
 ### 4. Privacy checks
 
@@ -65,7 +68,8 @@ Same trade, one account at a time. Use this if you want to feel each seat.
    Securities): RFQ Closed, own quote only — no winner, no clearing price, no
    receipt. Typing `/treasury` or `/dealer/b` sends you back to your own desk.
 2. Sign in as `auditor` (Halvorsen Assurance): `SettlementReceipt` only
-   (10 cETH / 30,400.00 USD / 3040.00). No RFQ, no quotes.
+   (10 cETH / 30,400.00 USD / 3040.00) with the same **Ledger tx** id. No RFQ,
+   no quotes.
 3. Sign in as `treasury`: closed RFQ, receipt, holdings 15 cETH and
    +30,400.00 USD.
 

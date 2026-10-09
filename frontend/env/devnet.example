@@ -7,6 +7,11 @@ LEDGER_AUTH0_CLIENT_ID=REPLACE_CLIENT_ID
 LEDGER_AUTH0_CLIENT_SECRET=REPLACE_CLIENT_SECRET
 LEDGER_AUTH0_AUDIENCE=REPLACE_LEDGER_API_AUDIENCE
 
+# Settled trades show their ledger transaction (update) id, linked to
+# https://devnet.ccview.io/updates/<id>/ by default on DevNet. Override or turn off:
+# LEDGER_EXPLORER_URL=https://devnet.ccview.io
+# LEDGER_EXPLORER_URL=off
+
 # HMAC key for the login session cookie (32+ random chars, e.g. `openssl rand -base64 48`).
 # Unset: a random per-process secret is used and every restart signs users out.
 # SESSION_SECRET=<paste a long random value; do not reuse this placeholder>
