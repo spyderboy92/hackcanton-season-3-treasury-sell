@@ -228,10 +228,12 @@ pinned, the app skips party discovery.
 the API only lets a session act as its own seat's party (plus the dealer seats for
 a Treasury session — see "Accounts and sessions"), but the server's ledger
 credential can still act for every provisioned party, and anyone who reaches the
-participant's ports directly bypasses the app entirely. Keep the app and the
-participant on loopback; do not expose them through a tunnel. Never place tokens,
-client secrets or `SESSION_SECRET` in `NEXT_PUBLIC_*`, source control,
-screenshots, or browser requests.
+participant's ports directly bypasses the app entirely. Keep the **participant**
+on loopback. Publishing the UI through the Compose `tunnel` profile
+(`docker compose --profile tunnel up`, see `env/tunnel.example`) is the intended
+judge path — the tunnel may only target `http://frontend:3000`, never
+`canton:6864` / `6865`. Never place tokens, client secrets or `SESSION_SECRET` in
+`NEXT_PUBLIC_*`, source control, screenshots, or browser requests.
 
 To run only the frontend in Docker against an external participant:
 

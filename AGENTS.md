@@ -131,6 +131,7 @@ container restarts along with the rest of the volume.
 | --- | --- |
 | `docker compose up` | build + run in the foreground |
 | `docker compose up -d` | detached |
+| `docker compose --profile tunnel up` | same stack + Cloudflare Tunnel for the UI only (`TUNNEL_TOKEN` required; see `env/tunnel.example`) |
 | `docker compose logs -f` | follow logs |
 | `docker compose down` | stop; ledger state (trades, accounts) survives in the volume |
 | `docker compose down -v` | stop and **wipe ledger state** (fresh party ids, fresh demo accounts on the next `up`) |
@@ -937,10 +938,12 @@ are redacted before returning errors to the browser.
 
 The app login is **not a participant-level identity**: users sign in to the app,
 but the server still holds one ledger credential that can act for every demo
-party. Keep every frontend on loopback, including LocalNet/DevNet profiles. One
-participant must host all demo parties and the operator; pin all seven
-`LEDGER_PARTY_*` ids (six seats + `_OPERATOR`) to skip party discovery on managed
-networks.
+party. Keep the **participant** on loopback (or private to the host), including
+LocalNet/DevNet profiles. The Compose `tunnel` profile may publish only the UI
+(`http://frontend:3000`); never route a tunnel at `canton:6864` / `6865`. See
+`env/tunnel.example`. One participant must host all demo parties and the operator;
+pin all seven `LEDGER_PARTY_*` ids (six seats + `_OPERATOR`) to skip party
+discovery on managed networks.
 See `frontend/README.md`, `frontend/env/*.example`, and `docker-compose.external.yml`.
 Run `cd frontend && npm run test:ledger` for the server profile/auth/adapter tests;
 these do not replace live network privacy and settlement checks.
@@ -1075,7 +1078,7 @@ Stated, not hidden. Each is deliberately unfixed for a recorded reason.
 | --- | --- |
 | **The allocated asset is pinned by `ContractId`, not escrowed.** `SettlementInstruction.assetHoldingCid` points at a holding that stays under the seller's control, so the seller can `Transfer` or split it between the two DvP steps. | This mock `TokenHolding` has no lock primitive. If the seller does spend it, `AllocatePaymentAndSettle` fails when it fetches the archived id — a contract-not-found rejection, not a clean assert — and the whole transaction aborts: nothing is lost and no partial settlement is possible. The seller does hold an option to walk away between the two steps. In a real deployment the pin is replaced by a **CIP-56 registry lock**, which the registry owns; building a lock or an escrow party into the mock would misrepresent where that responsibility lives. Pinned by `Tests.Settlement.settlementPinnedAssetCanBeSpentBySeller`. |
 | **`RfqFill` bounds reuse, not minting.** The treasury is its only signatory, so it can create a second fill right for the same `rfqId` and bind two dealers to the same quantity. | No ledger-level fix is available. Contract keys need LF 2.3 and this package targets 2.2 — and raising the target does not help: **Canton 3.5.1 does not enforce key uniqueness**, verified directly against a 3.5.1 sandbox where two contracts sharing `key (treasury, rfqId)` were both accepted. A key would read as a guarantee while enforcing nothing, which is worse than the stated gap. Enforcement would need a signatory the treasury does not control — a registry or notary party — which is a topology change, not a model change. The exposure is self-inflicted and invisible to dealers (`RfqFill` has no observers), so no dealer can detect it in advance. Exercised by `Tests.Authorization.authKnownLimitationTreasuryCanMintASecondFillRight`. |
-| **The sandbox Ledger API is unauthenticated, and the app login is not a participant-level identity.** The app checks a session against `asParty` on `/api/ledger/*`, but the server submits with one ledger credential for every party; LocalNet/DevNet outbound calls use that server credential, not the caller's. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the participant's ports bypasses the app and can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. So the stack is bound to **loopback only** — `docker-compose.yml` publishes `127.0.0.1:6864`, `127.0.0.1:6865` and `127.0.0.1:3000`. **Do not publish these on `0.0.0.0` or expose them through a tunnel.** A real deployment validates a per-user JWT at the participant and derives `asParty` from the token; `requireActingParty` is the single place that change lands. |
+| **The sandbox Ledger API is unauthenticated, and the app login is not a participant-level identity.** The app checks a session against `asParty` on `/api/ledger/*`, but the server submits with one ledger credential for every party; LocalNet/DevNet outbound calls use that server credential, not the caller's. | An auth/identity provider is an explicit non-goal (below), but the consequence is not optional to state: anyone who can reach the participant's ports bypasses the app and can read any desk's ACS and submit as any party, which is the whole privacy model defeated from outside it. Ledger ports stay on **loopback only** (`127.0.0.1:6864` / `6865`). **Do not publish them on `0.0.0.0` or point a Cloudflare Tunnel at them.** Publishing the **UI** via the Compose `tunnel` profile (`http://frontend:3000` only) is the intended public-demo path; the app session still gates `/api/ledger/*`, but it is not a substitute for participant auth. A real deployment validates a per-user JWT at the participant and derives `asParty` from the token; `requireActingParty` is the single place that change lands. |
 | **A Treasury session may act as Dealer A/B/C.** | Deliberate: the split view drives the dealer seats from one screen (section 6, "Accounts and sessions"). Reads stay party-scoped, so it learns nothing the dealer would not show it, but the treasury login is a demo operator over the dealer seats. Removing the exception means removing or splitting `/demo`. |
 | **The operator can bypass `Register`.** | It is the sole signatory of `UserAccount`, so it could create one directly and skip the directory. The operator *is* the app server; the guarantee is "the signup path cannot produce duplicates", not "no party can". Same root cause as the fill-right minting gap: no key enforcement on 3.5.1, and no second signatory to enforce it. |
 | **Sessions are not re-validated against the ledger per request.** | A signed cookie is trusted until it expires (8 h max). Archiving a `UserAccount` does not sign that user out; rotating `SESSION_SECRET` (or restarting with it unset) signs everyone out. Re-reading the operator's ACS on every request was not worth the latency for a demo. |
