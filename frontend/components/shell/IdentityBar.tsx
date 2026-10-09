@@ -1,4 +1,4 @@
-import { fingerprintOf, hintOf, type PartyInfo } from '@/lib/ledger/parties';
+import { fingerprintOf, shortHintOf, type PartyInfo } from '@/lib/ledger/parties';
 
 export function IdentityBar({ info, right }: { info: PartyInfo; right?: React.ReactNode }) {
   const fp = fingerprintOf(info.party);
@@ -8,7 +8,7 @@ export function IdentityBar({ info, right }: { info: PartyInfo; right?: React.Re
         <span className="text-lg font-semibold tracking-tight text-ink">{info.label} desk</span>
         <span className="text-xs text-ink-2">{info.institution}</span>
         <span className="num hidden text-micro text-ink-3 2xl:inline" title={info.party}>
-          <span className="text-ink-2">{hintOf(info.party)}</span>
+          <span className="text-ink-2">{shortHintOf(info.party)}</span>
           <span className="text-ink-4">::</span>
           {fp.slice(0, 12)}
           <span className="text-ink-4">…{fp.slice(-4)}</span>

@@ -49,10 +49,14 @@ export interface PartyInfo {
 }
 
 /**
- * The id hint each role is allocated under. `Demo.Bootstrap` allocates with
- * these hints, and the server-side resolver matches parties by them.
+ * Namespace on shared participants (DevNet) so demo id hints do not collide
+ * with other apps' `Treasury` / `DealerA` parties. Allocation and ACS matching
+ * use the prefixed form; the UI shows {@link PARTY_SHORT_HINTS}.
  */
-export const PARTY_HINTS: Record<DemoRole, string> = {
+export const PARTY_HINT_PREFIX = 'treasuryos';
+
+/** Short seat names: UI monospace id prefix and PartyProfile labels' stem. */
+export const PARTY_SHORT_HINTS: Record<DemoRole, string> = {
   treasury: 'Treasury',
   dealerA: 'DealerA',
   dealerB: 'DealerB',
@@ -60,6 +64,21 @@ export const PARTY_HINTS: Record<DemoRole, string> = {
   auditor: 'Auditor',
   registry: 'Registry',
 };
+
+export const OPERATOR_SHORT_HINT = 'Operator';
+
+/** Prefixed id hint each role is allocated under (`Demo.Bootstrap` + resolver). */
+export const PARTY_HINTS: Record<DemoRole, string> = {
+  treasury: `${PARTY_HINT_PREFIX}-${PARTY_SHORT_HINTS.treasury}`,
+  dealerA: `${PARTY_HINT_PREFIX}-${PARTY_SHORT_HINTS.dealerA}`,
+  dealerB: `${PARTY_HINT_PREFIX}-${PARTY_SHORT_HINTS.dealerB}`,
+  dealerC: `${PARTY_HINT_PREFIX}-${PARTY_SHORT_HINTS.dealerC}`,
+  auditor: `${PARTY_HINT_PREFIX}-${PARTY_SHORT_HINTS.auditor}`,
+  registry: `${PARTY_HINT_PREFIX}-${PARTY_SHORT_HINTS.registry}`,
+};
+
+/** Prefixed operator id hint (account directory / logins). Not a demo desk. */
+export const OPERATOR_HINT = `${PARTY_HINT_PREFIX}-${OPERATOR_SHORT_HINT}`;
 
 /**
  * Ids used by the in-memory fixture, and the pre-resolution placeholders in
@@ -75,12 +94,12 @@ const FP = {
 } as const;
 
 export const PLACEHOLDER_PARTY_IDS: Record<DemoRole, Party> = {
-  treasury: `Treasury-d4d9::${FP.treasury}`,
-  dealerA: `DealerA-7b21::${FP.dealerA}`,
-  dealerB: `DealerB-9c48::${FP.dealerB}`,
-  dealerC: `DealerC-2f60::${FP.dealerC}`,
-  auditor: `Auditor-5e13::${FP.auditor}`,
-  registry: `Registry-0a95::${FP.registry}`,
+  treasury: `${PARTY_HINTS.treasury}-d4d9::${FP.treasury}`,
+  dealerA: `${PARTY_HINTS.dealerA}-7b21::${FP.dealerA}`,
+  dealerB: `${PARTY_HINTS.dealerB}-9c48::${FP.dealerB}`,
+  dealerC: `${PARTY_HINTS.dealerC}-2f60::${FP.dealerC}`,
+  auditor: `${PARTY_HINTS.auditor}-5e13::${FP.auditor}`,
+  registry: `${PARTY_HINTS.registry}-0a95::${FP.registry}`,
 };
 
 /** The live table. Mutated by `applyPartyIds`, read through the getters below. */
@@ -219,13 +238,13 @@ export function infoForRole(role: DemoRole): PartyInfo {
   return found;
 }
 
-/** Short display name for a party id, falling back to the id's hint segment. */
+/** Short display name for a party id, falling back to the short hint segment. */
 export function partyLabel(party: Party): string {
-  return partyInfo(party)?.label ?? hintOf(party);
+  return partyInfo(party)?.label ?? shortHintOf(party);
 }
 
 export function institutionOf(party: Party): string {
-  return partyInfo(party)?.institution ?? hintOf(party);
+  return partyInfo(party)?.institution ?? shortHintOf(party);
 }
 
 export function dealerBySlug(slug: string): PartyInfo | undefined {
@@ -233,10 +252,27 @@ export function dealerBySlug(slug: string): PartyInfo | undefined {
   return info?.desk === 'dealer' ? info : undefined;
 }
 
-/** The readable prefix of a Canton party id. */
+/** The raw Canton id-hint segment (may include {@link PARTY_HINT_PREFIX}). */
 export function hintOf(party: Party): string {
   const i = party.indexOf('::');
   return i === -1 ? party : party.slice(0, i);
+}
+
+/**
+ * Hint segment for display: known seats → short name; otherwise strip the
+ * namespace prefix so `treasuryos-Treasury-1` renders as `Treasury-1`.
+ */
+export function shortHintOf(party: Party): string {
+  const info = partyInfo(party);
+  if (info) return PARTY_SHORT_HINTS[info.role];
+  const raw = hintOf(party);
+  const prefixedOp = `${OPERATOR_HINT}-`;
+  if (raw === OPERATOR_HINT || raw.startsWith(prefixedOp)) {
+    return raw === OPERATOR_HINT ? OPERATOR_SHORT_HINT : `${OPERATOR_SHORT_HINT}-${raw.slice(prefixedOp.length)}`;
+  }
+  const pref = `${PARTY_HINT_PREFIX}-`;
+  if (!raw.startsWith(pref)) return raw;
+  return raw.slice(pref.length);
 }
 
 /** The key fingerprint half of a Canton party id. */
@@ -249,7 +285,7 @@ export function fingerprintOf(party: Party): string {
 export function shortParty(party: Party, keep = 6): string {
   const fp = fingerprintOf(party);
   if (!fp) return party;
-  return `${hintOf(party)}::${fp.slice(0, keep)}…${fp.slice(-4)}`;
+  return `${shortHintOf(party)}::${fp.slice(0, keep)}…${fp.slice(-4)}`;
 }
 
 /** Where an operating identity lands after the entitlements gate. */

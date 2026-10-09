@@ -1,5 +1,9 @@
 name: treasury-rfq-external
 
+# Frontend against an external participant (LocalNet/DevNet). No JVM sandbox.
+# Optional Cloudflare Tunnel: `docker compose -f docker-compose.external.yml --profile tunnel up`
+# Published route must target http://frontend:3000 — never the participant.
+
 services:
   frontend:
     build:
@@ -11,5 +15,20 @@ services:
       - "127.0.0.1:3000:3000"
     env_file:
       - ${FRONTEND_ENV_FILE:-./frontend/.env.local}
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+  tunnel:
+    image: cloudflare/cloudflared:2026.3.0
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      frontend:
+        condition: service_started

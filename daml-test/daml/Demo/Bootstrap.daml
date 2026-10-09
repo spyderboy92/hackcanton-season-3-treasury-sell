@@ -7,12 +7,12 @@
 --
 -- What it creates:
 --   * six parties -- Treasury, DealerA, DealerB, DealerC, Auditor, Registry -- allocated
---     with id hints so the party ids read as @DealerB::1220...@
+--     with prefixed id hints so the party ids read as @treasuryos-DealerB::1220...@
 --   * holdings issued by Registry: Treasury 25 cETH, each dealer 1,000,000 USD
 --   * one Open RFQ: Treasury SELLS 10 cETH quoted in USD, inviting all three dealers
 --   * one RfqInvitation per dealer, each observed by that dealer alone
---   * an Operator party (id hint @Operator@): the app operator the Next.js server acts
---     as to read the directory and verify logins (HAC-12/13)
+--   * an Operator party (id hint @treasuryos-Operator@): the app operator the Next.js
+--     server acts as to read the directory and verify logins (HAC-12/13)
 --   * one empty AccountDirectory, signed by Operator
 --   * one PartyProfile per seat -- treasury, dealerA, dealerB, dealerC, auditor,
 --     registry -- carrying the label and institution the UI shows, each observed by the
