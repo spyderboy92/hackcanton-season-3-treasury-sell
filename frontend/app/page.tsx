@@ -7,7 +7,7 @@ import { UserMenu } from '@/components/shell/UserMenu';
 import { Wordmark } from '@/components/shell/Wordmark';
 import { canOpen, homeFor } from '@/lib/auth/access';
 import { currentSession } from '@/lib/auth/server/request';
-import { fingerprintOf, hintOf, OPERATING_IDENTITIES, routeFor } from '@/lib/ledger/parties';
+import { fingerprintOf, OPERATING_IDENTITIES, routeFor, shortHintOf } from '@/lib/ledger/parties';
 
 const SESSION = [
   ['Instrument', 'cETH quoted in USD'],
@@ -107,7 +107,7 @@ export default async function EntitlementsGate() {
                         <span className="text-mini text-ink-3">{info.label}</span>
                       </div>
                       <span className="num mt-1 block text-micro text-ink-4" title={info.party}>
-                        <span className="text-ink-3">{hintOf(info.party)}</span>::{fp.slice(0, 10)}…
+                        <span className="text-ink-3">{shortHintOf(info.party)}</span>::{fp.slice(0, 10)}…
                       </span>
                     </div>
                     <p className="col-start-1 max-w-[60ch] text-xs leading-relaxed text-ink-2">

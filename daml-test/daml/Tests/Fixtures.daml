@@ -93,8 +93,17 @@ data DemoParties = DemoParties with
     stranger : Party
   deriving (Eq, Show)
 
--- | Allocate with an id hint so the party ids read as @Treasury::1220...@ rather than
--- as an opaque hash: the sandbox bootstrap prints these for the frontend config.
+-- | Shared-participant namespace. Must stay in lockstep with
+-- 'frontend/lib/ledger/parties.ts' (`PARTY_HINT_PREFIX`).
+partyHintPrefix : Text
+partyHintPrefix = "treasuryos-"
+
+-- | Prefixed allocation hint, e.g. @treasuryos-Treasury@.
+partyHint : Text -> Text
+partyHint shortName = partyHintPrefix <> shortName
+
+-- | Allocate with an id hint so the party ids read as @treasuryos-Treasury::1220...@
+-- rather than as an opaque hash: the sandbox bootstrap prints these for the frontend.
 allocateNamed : Text -> Script Party
 allocateNamed name = allocatePartyByHint (PartyIdHint name)
 
@@ -103,15 +112,16 @@ allocateNamed name = allocatePartyByHint (PartyIdHint name)
 -- Id hints must be unique per participant, and the aggregate entry points in 'Tests'
 -- run several scenarios against one ledger, so a cast after the first is suffixed with
 -- the number of casts already allocated. The first cast on any ledger -- including a
--- live sandbox that already hosts a participant admin party -- is plain @Treasury@,
--- @DealerA@, ..., which is what Demo.Bootstrap prints for the frontend config.
+-- live sandbox that already hosts a participant admin party -- is
+-- @treasuryos-Treasury@, @treasuryos-DealerA@, ..., which is what Demo.Bootstrap
+-- prints for the frontend config.
 allocateDemoParties : Script DemoParties
 allocateDemoParties = do
   known <- listKnownParties
   let ids = map (\d -> partyToText d.party) known
-      alreadyCast = length (filter (isPrefixOf "Treasury") ids)
+      alreadyCast = length (filter (isPrefixOf (partyHint "Treasury")) ids)
       suffix = if alreadyCast == 0 then "" else "-" <> show alreadyCast
-      named name = allocateNamed (name <> suffix)
+      named shortName = allocateNamed (partyHint shortName <> suffix)
   treasury <- named "Treasury"
   dealerA <- named "DealerA"
   dealerB <- named "DealerB"
@@ -400,16 +410,18 @@ settledRfq = do
 -- 'openRfq'; Tests.Accounts runs it on its own.
 -- ---------------------------------------------------------------------------
 
--- | Allocate the app operator with id hint @Operator@, suffixed exactly as
--- 'allocateDemoParties' suffixes the cast, so the first operator on any ledger --
--- the one Demo.Bootstrap prints -- reads as @Operator::1220...@.
+-- | Allocate the app operator with id hint @treasuryos-Operator@, suffixed
+-- exactly as 'allocateDemoParties' suffixes the cast, so the first operator on
+-- any ledger -- the one Demo.Bootstrap prints -- reads as
+-- @treasuryos-Operator::1220...@.
 allocateOperator : Script Party
 allocateOperator = do
   known <- listKnownParties
-  let alreadyAllocated =
-        length (filter (\d -> "Operator" `isPrefixOf` partyToText d.party) known)
+  let opHint = partyHint "Operator"
+      alreadyAllocated =
+        length (filter (\d -> opHint `isPrefixOf` partyToText d.party) known)
       suffix = if alreadyAllocated == 0 then "" else "-" <> show alreadyAllocated
-  allocateNamed ("Operator" <> suffix)
+  allocateNamed (opHint <> suffix)
 
 -- | The party directory, moved on-ledger from the frontend: (seat, label, institution).
 -- The seat names are the ones 'TreasuryRfq.Accounts.knownSeats' accepts.
