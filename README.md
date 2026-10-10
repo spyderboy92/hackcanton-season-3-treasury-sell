@@ -141,22 +141,3 @@ sequenceDiagram
 ```
 
 Settlement is two-step DvP because a single `Settle` is impossible: it would need the counterparty's holding `ContractId`, and neither party is a stakeholder on the other's holding. Each side allocates its own leg; both signed the instruction, so step two moves both legs atomically. Settled positions: treasury 25 → 15 cETH and +30,400.00 USD; winner 0 → 10 cETH and 1,000,000 → 969,600.00 USD; losing dealers untouched.
-
-## Status
-
-| Layer | State |
-| --- | --- |
-| Contract model | 11 templates, 12 business choices, 6 modules, 722 lines. Canton SDK 3.5.1. |
-| Tests | 74 Daml Script tests, all passing. 100% coverage: 11/11 templates, 23/23 choices. |
-| Frontend | Next.js 15 App Router, TypeScript strict, Tailwind v4, 17 route files, 94 source files, zero runtime deps beyond react/react-dom/next. |
-| Accounts | Login and signup on the ledger (`TreasuryRfq.Accounts`); HMAC-signed session cookie; the API lets a session act only as its own seat's party. |
-| Live ledger | Full round trip driven through the UI against a running sandbox: quote, accept, allocate, settle. |
-
-> **Run it on your own machine only.** The Canton sandbox serves the Ledger API with
-> no authentication: the acting party is whatever the caller names, so anyone who can
-> reach port 6864 can read any desk and submit as any party. The app login does not
-> change that — it gates the app's own API, not the participant, and the server still
-> uses one ledger credential for every party. Compose binds every published port to
-> `127.0.0.1` for that reason — do not expose them.
-
-**Known gaps.** The allocated asset is pinned by `ContractId`, not escrowed — the mock holding has no lock, so a seller can spend it between the two steps (settle then aborts cleanly with contract-not-found; real CIP-56 registries provide the lock). The single-use fill right bounds reuse but not minting — the treasury is its only signatory, so it can mint a second one for the same `rfqId`; no ledger-level fix exists, because Canton 3.5.1 does not enforce contract-key uniqueness. `TokenHolding` is a mock; live CIP-56 integration is P2. Settlement requires explicit disclosure of the seller's holding. The Ledger API is unauthenticated and the app login is not a participant-level identity, so the stack is loopback-only. A Treasury session may also act as the three dealer parties, because the split view drives the dealer seats. The operator is the only signatory of a `UserAccount`, so it can bypass `Register`; it is the app server, so the guarantee is "the signup path cannot produce duplicates". Sessions are not re-checked against the ledger per request (8 h expiry). In mock mode the fixture is browser-side, so login gates routing only. See [`AGENTS.md`](AGENTS.md) for the design rationale behind each decision and the full gap list.
