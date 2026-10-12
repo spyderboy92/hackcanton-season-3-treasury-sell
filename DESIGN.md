@@ -1,4 +1,4 @@
-# Treasury RFQ design system
+# Canton TreasuryOS design system
 
 ## 1. Atmosphere and identity
 

@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { AuthFrame } from '@/components/auth/AuthFrame';
 import { SignupForm } from '@/components/auth/SignupForm';
 
-export const metadata: Metadata = { title: 'Create account — Treasury RFQ' };
+export const metadata: Metadata = { title: 'Create account — Canton TreasuryOS' };
 
 export default async function SignupPage({
   searchParams,

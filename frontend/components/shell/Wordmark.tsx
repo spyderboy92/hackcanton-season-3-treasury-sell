@@ -12,8 +12,7 @@ export function Wordmark({ href = '/' }: { href?: string }) {
         <rect x="3" y="3" width="4" height="4" fill="var(--accent)" />
         <rect x="8" y="8" width="3" height="3" fill="var(--ink-4)" />
       </svg>
-      <span className="text-xs font-semibold tracking-tight text-ink">Treasury RFQ</span>
-      <span className="hidden text-mini text-ink-4 lg:inline">Canton</span>
+      <span className="text-xs font-semibold tracking-tight text-ink">Canton TreasuryOS</span>
     </Link>
   );
 }

@@ -1,4 +1,4 @@
-# Private Treasury RFQ
+# Canton TreasuryOS
 
 A corporate treasury requests quotes from several dealers on Canton. Each dealer sees only its own price — enforced by the ledger, not the UI.
 

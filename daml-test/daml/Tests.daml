@@ -1,4 +1,4 @@
--- | Suite index for the Treasury RFQ contract model.
+-- | Suite index for the Canton TreasuryOS contract model.
 --
 -- @dpm test --package-root daml-test@ discovers and runs every @Script@ in this
 -- package, so this module is a map rather than a runner. It re-exports the whole suite

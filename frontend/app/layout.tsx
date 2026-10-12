@@ -23,7 +23,7 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Treasury RFQ — private quote formation on Canton',
+  title: 'Canton TreasuryOS — private quote formation',
   description:
     'Institutional request-for-quote workflow where each dealer sees only its own price, enforced by the ledger.',
 };
