@@ -1,4 +1,4 @@
-# Treasury RFQ — frontend
+# Canton TreasuryOS — frontend
 
 Institutional request-for-quote desk on Canton. A corporate treasury raises one
 RFQ, three dealers each answer with a private bilateral price, the treasury

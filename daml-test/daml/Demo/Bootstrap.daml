@@ -58,7 +58,7 @@ bootstrap = do
   seeded <- seedAccounts p
 
   debug "=================================================================="
-  debug "Treasury RFQ demo seeded. Party ids for the frontend config:"
+  debug "Canton TreasuryOS demo seeded. Party ids for the frontend config:"
   forA_
     [ ("treasury", p.treasury)
     , ("dealerA", p.dealerA)

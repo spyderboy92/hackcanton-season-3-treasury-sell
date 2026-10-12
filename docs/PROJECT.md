@@ -1,4 +1,4 @@
-# Private Treasury RFQ — Project Tracking
+# Canton TreasuryOS — Project Tracking
 
 This file is the main index for the project. It contains project context and a
 table of all tracked epics and tasks. Read this file at the start of a session.

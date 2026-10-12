@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { AuthFrame } from '@/components/auth/AuthFrame';
 import { LoginForm } from '@/components/auth/LoginForm';
 
-export const metadata: Metadata = { title: 'Sign in — Treasury RFQ' };
+export const metadata: Metadata = { title: 'Sign in — Canton TreasuryOS' };
 
 /**
  * `next` is read from the server-side search params and handed down, rather

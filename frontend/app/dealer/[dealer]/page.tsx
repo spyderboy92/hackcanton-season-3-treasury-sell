@@ -15,7 +15,9 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { dealer } = await params;
   const info = dealerBySlug(dealer);
-  return { title: info ? `${info.label} desk — Treasury RFQ` : 'Dealer desk — Treasury RFQ' };
+  return {
+    title: info ? `${info.label} desk — Canton TreasuryOS` : 'Dealer desk — Canton TreasuryOS',
+  };
 }
 
 export default async function DealerPage({ params }: { params: Promise<{ dealer: string }> }) {
